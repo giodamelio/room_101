@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+iroh = "0.91.1"
+miette = "7.6.0"
+thiserror = "2.0.12"
+tokio = { version = "1.47.1", features = ["full"] }
