@@ -1,18 +1,13 @@
-//! Very basic example to showcase how to use iroh's APIs.
-//!
-//! This example implements a simple protocol that echos any data sent to it in the first stream.
+//! Server that accepts connections and echoes data back.
 
 use iroh::{
-    Endpoint, NodeAddr, Watcher,
+    Endpoint, Watcher,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use miette::{IntoDiagnostic, Result};
 
 /// Each protocol is identified by its ALPN string.
-///
-/// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
-/// and the connection is aborted unless both nodes pass the same bytestring.
 const ALPN: &[u8] = b"room_101/secrets/0";
 
 #[tokio::main]
@@ -20,50 +15,18 @@ async fn main() -> Result<()> {
     let router = start_accept_side().await?;
     let node_addr = router.endpoint().node_addr().initialized().await;
 
-    println!("Our Address: {node_addr:#?}");
+    println!("Server started!");
+    println!("Node ID: {}", node_addr.node_id);
+    println!("Full address: {node_addr:#?}");
+    println!("Waiting for connections...");
 
-    connect_side(node_addr).await?;
+    // Keep the server running
+    tokio::signal::ctrl_c().await.into_diagnostic()?;
+    println!("\nShutting down server...");
 
     // This makes sure the endpoint in the router is closed properly and connections close gracefully
     router.shutdown().await.into_diagnostic()?;
 
-    Ok(())
-}
-
-async fn connect_side(addr: NodeAddr) -> Result<()> {
-    let endpoint = Endpoint::builder()
-        .discovery_n0()
-        .bind()
-        .await
-        .into_diagnostic()?;
-
-    // Open a connection to the accepting node
-    let conn = endpoint.connect(addr, ALPN).await.into_diagnostic()?;
-
-    // Open a bidirectional QUIC stream
-    let (mut send, mut recv) = conn.open_bi().await.into_diagnostic()?;
-
-    // Send some data to be echoed
-    send.write_all(b"Hello, world!").await.into_diagnostic()?;
-
-    // Signal the end of data for this particular stream
-    send.finish().into_diagnostic()?;
-
-    // Receive the echo, but limit reading up to maximum 1000 bytes
-    let response = recv.read_to_end(1000).await.into_diagnostic()?;
-    assert_eq!(&response, b"Hello, world!");
-
-    // Explicitly close the whole connection.
-    conn.close(0u32.into(), b"bye!");
-
-    // The above call only queues a close message to be sent (see how it's not async!).
-    // We need to actually call this to make sure this message is sent out.
-    endpoint.close().await;
-    // If we don't call this, but continue using the endpoint, we then the queued
-    // close call will eventually be picked up and sent.
-    // But always try to wait for endpoint.close().await to go through before dropping
-    // the endpoint to ensure any queued messages are sent through and connections are
-    // closed gracefully.
     Ok(())
 }
 
@@ -91,7 +54,7 @@ impl ProtocolHandler for Echo {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's node id from the connection.
         let node_id = connection.remote_node_id()?;
-        println!("accepted connection from {node_id}");
+        println!("Accepted connection from {node_id}");
 
         // Our protocol is a simple request-response protocol, so we expect the
         // connecting peer to open a single bi-directional stream.
@@ -100,7 +63,7 @@ impl ProtocolHandler for Echo {
         // Echo any bytes received back directly.
         // This will keep copying until the sender signals the end of data on the stream.
         let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
-        println!("Copied over {bytes_sent} byte(s)");
+        println!("Echoed {bytes_sent} byte(s) back to {node_id}");
 
         // By calling `finish` on the send stream we signal that we will not send anything
         // further, which makes the receive stream on the other end terminate.

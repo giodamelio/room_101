@@ -3,6 +3,14 @@ name = "room_101"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
 [dependencies]
 iroh = "0.91.1"
 miette = "7.6.0"
