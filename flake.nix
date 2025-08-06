@@ -90,7 +90,6 @@
             };
           };
         };
-
         # Manual Rust package using Fenix toolchain
         # lilvault =
         #   (pkgs.makeRustPlatform {

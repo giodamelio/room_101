@@ -3,7 +3,8 @@
   "permissions": {
     "allow": [
       "Bash(cargo:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "WebFetch(domain:github.com)"
     ]
   },
   "enableAllProjectMcpServers": true,

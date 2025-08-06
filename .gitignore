@@ -1,8 +1,4 @@
 target/
 .direnv/
 result/
-
-
-# Added by cargo
-
-/target
+room_101.db/

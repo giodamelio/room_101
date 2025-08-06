@@ -3,16 +3,12 @@ name = "room_101"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "server"
-path = "src/bin/server.rs"
-
-[[bin]]
-name = "client"
-path = "src/bin/client.rs"
-
 [dependencies]
 iroh = "0.91.1"
+iroh-gossip = "0.91.0"
 miette = "7.6.0"
 thiserror = "2.0.12"
 tokio = { version = "1.47.1", features = ["full"] }
+hex = "0.4"
+surrealdb = { version = "2.3.7", features = ["kv-surrealkv"] }
+serde = { version = "1.0.219", features = ["derive"] }
