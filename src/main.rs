@@ -1,9 +1,24 @@
-use iroh::{Endpoint, NodeAddr, NodeId, Watcher, protocol::Router};
+use iroh::{Endpoint, NodeAddr, NodeId, SecretKey, Watcher, protocol::Router};
 use iroh_gossip::{ALPN, net::Gossip};
 use miette::{IntoDiagnostic, Result, diagnostic};
+use rand::rngs;
+use serde::{Deserialize, Serialize};
 use std::{env, str::FromStr};
+use surrealdb::Surreal;
 use surrealdb::engine::local::SurrealKv;
-use surrealdb::{Response, Surreal};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Identity {
+    secret_key: SecretKey,
+}
+
+impl Identity {
+    fn new() -> Self {
+        Self {
+            secret_key: SecretKey::generate(rngs::OsRng),
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,18 +31,41 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| diagnostic!("Error: {e}"))?;
 
-    // Run a test query
-    let one: Response = db
-        .query("SELECT 1 FROM 1")
-        .await
-        .map_err(|b| diagnostic!("Can't select: {b}"))?;
+    // Get our identity from the db if it exists, otherwise generate one
+    let identity: Option<Identity> = db.select(("config", "identity")).await.into_diagnostic()?;
+    let identity = match identity {
+        Some(identity) => {
+            println!(
+                "Loaded identity from db with public key: {}",
+                identity.secret_key.public()
+            );
 
-    dbg!(one);
+            identity
+        }
+        None => {
+            let new_identity = Identity::new();
+
+            // Write the new identity
+            let _: Option<Identity> = db
+                .create(("config", "identity"))
+                .content(new_identity.clone())
+                .await
+                .into_diagnostic()?;
+
+            println!(
+                "Created new identity with public key: {}",
+                new_identity.secret_key.public()
+            );
+
+            new_identity
+        }
+    };
 
     let args: Vec<String> = env::args().collect();
 
     // Create endpoint for this node
     let endpoint = Endpoint::builder()
+        .secret_key(identity.secret_key)
         .discovery_n0()
         .bind()
         .await
