@@ -4,8 +4,10 @@ use miette::{IntoDiagnostic, Result, diagnostic};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
 use std::{env, str::FromStr};
-use surrealdb::Surreal;
-use surrealdb::engine::local::SurrealKv;
+use surrealdb::engine::local::{Db, SurrealKv};
+use surrealdb::{Datetime, Surreal};
+use tracing::{debug, error, info, instrument, warn};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Identity {
@@ -13,31 +15,74 @@ struct Identity {
 }
 
 impl Identity {
+    #[instrument]
     fn new() -> Self {
-        Self {
+        debug!("Generating new identity with random secret key");
+        let identity = Self {
             secret_key: SecretKey::generate(rngs::OsRng),
-        }
+        };
+        debug!(public_key = %identity.secret_key.public(), "Generated new identity");
+        identity
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Peer {
+    id: NodeId,
+    last_seen: Datetime,
+}
+
+/// Initialize simple tracing-based logging to stdout
+fn setup_tracing() -> Result<()> {
+    // Set up environment filter
+    // Default to INFO level, but allow override with RUST_LOG environment variable
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("room_101=info,iroh=error,iroh_gossip=error"));
+
+    // Initialize the subscriber with structured logging to stdout
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .compact()
+        .init();
+
+    Ok(())
+}
+
+type DB = Surreal<Db>;
+
+async fn get_peers(db: &DB) -> Result<Vec<Peer>> {
+    db.select("peer").await.into_diagnostic()
+}
+
 #[tokio::main]
+#[instrument]
 async fn main() -> Result<()> {
+    // Initialize tracing first
+    setup_tracing()?;
+
+    info!("Starting Room 101");
+
     // Connect to our database
-    let db = Surreal::new::<SurrealKv>("room_101.db")
+    debug!("Connecting to SurrealDB database");
+    let db: DB = Surreal::new::<SurrealKv>("room_101.db")
         .await
         .into_diagnostic()?;
     db.use_ns("room_101")
         .use_db("main")
         .await
-        .map_err(|e| diagnostic!("Error: {e}"))?;
+        .map_err(|e| diagnostic!("Error connecting to database: {e}"))?;
 
     // Get our identity from the db if it exists, otherwise generate one
     let identity: Option<Identity> = db.select(("config", "identity")).await.into_diagnostic()?;
     let identity = match identity {
         Some(identity) => {
-            println!(
-                "Loaded identity from db with public key: {}",
-                identity.secret_key.public()
+            info!(
+                public_key = %identity.secret_key.public(),
+                "Loaded existing identity from database"
             );
 
             identity
@@ -52,18 +97,22 @@ async fn main() -> Result<()> {
                 .await
                 .into_diagnostic()?;
 
-            println!(
-                "Created new identity with public key: {}",
-                new_identity.secret_key.public()
+            info!(
+                public_key = %new_identity.secret_key.public(),
+                "Created new identity and saved to database"
             );
 
             new_identity
         }
     };
 
+    // List our current peers
+    dbg!(get_peers(&db).await?);
+
     let args: Vec<String> = env::args().collect();
 
     // Create endpoint for this node
+    debug!("Creating iroh endpoint with identity");
     let endpoint = Endpoint::builder()
         .secret_key(identity.secret_key)
         .discovery_n0()
@@ -73,21 +122,26 @@ async fn main() -> Result<()> {
 
     let mut node_addr_watcher = endpoint.node_addr();
     let node_addr = node_addr_watcher.initialized().await;
-    println!("🚀 Starting Room 101 node");
-    println!("Node ID: {}", node_addr.node_id);
-    println!("Full address: {node_addr:#?}");
+    info!(
+        node_id = %node_addr.node_id,
+        addresses = ?node_addr.direct_addresses,
+        relay_url = ?node_addr.relay_url,
+        "Node endpoint initialized"
+    );
 
     // Create gossip instance using builder pattern
+    debug!("Spawning gossip protocol handler");
     let gossip = Gossip::builder().spawn(endpoint.clone());
 
     // Setup router
+    debug!("Setting up protocol router");
     let router = Router::builder(endpoint.clone())
         .accept(ALPN, gossip.clone())
         .spawn();
 
-    println!("📡 Gossip protocol started");
-    println!(
-        "💡 To connect another node: cargo run -- {}",
+    info!("Accepting connections...");
+    info!(
+        "To connect another node: cargo run -- {}",
         node_addr.node_id
     );
 
@@ -96,25 +150,40 @@ async fn main() -> Result<()> {
         let peer_node_id_str = &args[1];
         if let Ok(peer_node_id) = NodeId::from_str(peer_node_id_str) {
             let peer_addr = NodeAddr::new(peer_node_id);
-            println!("🔗 Attempting to connect to peer: {peer_node_id}");
+            info!(
+                peer_node_id = %peer_node_id,
+                "Attempting to connect to peer"
+            );
 
             // Try to connect to the peer
             if let Err(e) = endpoint.connect(peer_addr, ALPN).await {
-                println!("⚠️  Failed to connect to peer: {e}");
+                error!(
+                    peer_node_id = %peer_node_id,
+                    error = %e,
+                    "Failed to connect to peer"
+                );
             } else {
-                println!("✅ Successfully connected to peer");
+                info!(
+                    peer_node_id = %peer_node_id,
+                    "Successfully connected to peer"
+                );
             }
         } else {
-            println!("⚠️  Invalid peer node ID: {peer_node_id_str}");
+            warn!(
+                invalid_node_id = %peer_node_id_str,
+                "Invalid peer node ID provided"
+            );
         }
     }
 
     // Keep the application running
-    println!("👂 Node running... Press Ctrl+C to exit");
+    info!("Node running and listening for connections. Press Ctrl+C to exit");
     tokio::signal::ctrl_c().await.into_diagnostic()?;
 
-    println!("\n🔄 Shutting down...");
+    info!("Received shutdown signal, gracefully shutting down...");
     router.shutdown().await.into_diagnostic()?;
+
+    info!("Node shutdown complete");
 
     Ok(())
 }
