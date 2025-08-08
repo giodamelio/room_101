@@ -60,7 +60,11 @@
           '';
 
         # Fenix Rust toolchain
-        rustToolchain = inputs.fenix.packages.${system}.stable.toolchain;
+        rustToolchain = with inputs.fenix.packages.${system};
+          combine [
+            stable.toolchain
+            targets.wasm32-unknown-unknown.stable.toolchain
+          ];
 
         # Read Cargo.toml for package metadata
         # cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
@@ -208,6 +212,7 @@
 
         packages = {
           inherit mcp-language-server;
+          inherit rustToolchain;
           # inherit lilvault mcp-language-server;
           # default = lilvault;
         };
@@ -264,14 +269,7 @@
           packages = with pkgs;
             [
               # Fenix Rust toolchain with all components
-              (inputs.fenix.packages.${system}.stable.withComponents [
-                "cargo"
-                "rustc"
-                "clippy"
-                "rustfmt"
-                "rust-analyzer"
-                "rust-src"
-              ])
+              rustToolchain
 
               # Treefmt tools
               config.treefmt.build.wrapper # Wrapped treefmt script
@@ -281,6 +279,9 @@
 
               # Claude Code
               claude-code
+
+              # Rust hotreloading web server helper
+              trunk
             ]
             ++
             # All the formatter programs
