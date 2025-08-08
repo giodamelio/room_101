@@ -198,7 +198,7 @@ async fn main() -> Result<()> {
         let _ = shutdown_tx.send(());
     });
 
-    tokio::try_join!(iroh_task, webserver_task).into_diagnostic()?;
+    let _ = tokio::try_join!(iroh_task, webserver_task).into_diagnostic()?;
 
     info!("Node shutdown complete");
 
