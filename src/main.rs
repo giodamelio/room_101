@@ -1,13 +1,13 @@
-use iroh::{Endpoint, NodeAddr, NodeId, SecretKey, Watcher, protocol::Router};
+use iroh::{Endpoint, NodeId, SecretKey, Watcher, protocol::Router};
 use iroh_gossip::{ALPN, net::Gossip};
 use miette::{IntoDiagnostic, Result, diagnostic};
-use poem::{IntoResponse, Route, Server, get, handler, listener::TcpListener, web::Path};
+use poem::{Route, Server, get, handler, listener::TcpListener, web::Path};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
-use std::{env, str::FromStr};
 use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::{Datetime, Surreal};
-use tracing::{debug, error, info, instrument, warn};
+use tokio::sync::broadcast;
+use tracing::{debug, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ struct Peer {
     last_seen: Datetime,
 }
 
-async fn iroh(db: DB) -> Result<()> {
+async fn iroh(db: DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> {
     // Get our identity from the db if it exists, otherwise generate one
     let identity: Option<Identity> = db.select(("config", "identity")).await.into_diagnostic()?;
     let identity = match identity {
@@ -66,8 +66,6 @@ async fn iroh(db: DB) -> Result<()> {
 
     // List our current peers
     dbg!(get_peers(&db).await?);
-
-    let args: Vec<String> = env::args().collect();
 
     // Create endpoint for this node
     debug!("Creating iroh endpoint with identity");
@@ -103,43 +101,14 @@ async fn iroh(db: DB) -> Result<()> {
         node_addr.node_id
     );
 
-    // If a peer node ID is provided, try to connect to it
-    if args.len() > 1 {
-        let peer_node_id_str = &args[1];
-        if let Ok(peer_node_id) = NodeId::from_str(peer_node_id_str) {
-            let peer_addr = NodeAddr::new(peer_node_id);
-            info!(
-                peer_node_id = %peer_node_id,
-                "Attempting to connect to peer"
-            );
+    // Wait until the shudown signal comes
+    let _ = shutdown_tx.subscribe().recv().await;
 
-            // Try to connect to the peer
-            if let Err(e) = endpoint.connect(peer_addr, ALPN).await {
-                error!(
-                    peer_node_id = %peer_node_id,
-                    error = %e,
-                    "Failed to connect to peer"
-                );
-            } else {
-                info!(
-                    peer_node_id = %peer_node_id,
-                    "Successfully connected to peer"
-                );
-            }
-        } else {
-            warn!(
-                invalid_node_id = %peer_node_id_str,
-                "Invalid peer node ID provided"
-            );
-        }
-    }
-
-    // Keep the application running
-    info!("Node running and listening for connections. Press Ctrl+C to exit");
-    tokio::signal::ctrl_c().await.into_diagnostic()?;
-
-    info!("Received shutdown signal, gracefully shutting down...");
+    // Shutdown the router
+    info!("Iroh listener shutting down gracefully...");
     router.shutdown().await.into_diagnostic()?;
+
+    debug!("Iroh listener stopped");
 
     Ok(())
 }
@@ -149,13 +118,21 @@ fn hello(Path(name): Path<String>) -> String {
     format!("hello: {name}")
 }
 
-async fn webserver() -> Result<()> {
+async fn webserver(shutdown_tx: broadcast::Sender<()>) -> Result<()> {
     let app = Route::new().at("/hello/:name", get(hello));
 
     info!("Starting web ui on port 3000");
 
+    let mut shutdown_rx = shutdown_tx.subscribe();
     Server::new(TcpListener::bind("0.0.0.0:3000"))
-        .run(app)
+        .run_with_graceful_shutdown(
+            app,
+            async move {
+                let _ = shutdown_rx.recv().await;
+                info!("Poem server received shutdown signal");
+            },
+            None,
+        )
         .await
         .into_diagnostic()?;
 
@@ -206,8 +183,16 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| diagnostic!("Error connecting to database: {e}"))?;
 
-    let iroh_task = tokio::spawn(iroh(db.clone()));
-    let webserver_task = tokio::spawn(webserver());
+    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+
+    let iroh_task = tokio::spawn(iroh(db.clone(), shutdown_tx.clone()));
+    let webserver_task = tokio::spawn(webserver(shutdown_tx.clone()));
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        debug!("\nGot Control C...");
+        let _ = shutdown_tx.send(());
+    });
 
     tokio::try_join!(iroh_task, webserver_task).into_diagnostic()?;
 
