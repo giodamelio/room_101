@@ -27,6 +27,9 @@
       url = "github:natsukium/mcp-servers-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    process-compose-flake.url = "github:Platonic-Systems/process-compose-flake";
+    services-flake.url = "github:juspay/services-flake";
   };
 
   outputs = inputs @ {flake-parts, ...}:
@@ -36,6 +39,7 @@
       imports = [
         inputs.treefmt-nix.flakeModule
         inputs.git-hooks-nix.flakeModule
+        inputs.process-compose-flake.flakeModule
       ];
 
       perSystem = {
@@ -46,6 +50,8 @@
         system,
         ...
       }: let
+        inherit (pkgs) lib;
+
         # Prepare SQLx database for compile-time verification
         sqlx-db =
           pkgs.runCommand "sqlx-db-prepare" {
@@ -168,6 +174,16 @@
           config.allowUnfree = true;
         };
 
+        process-compose.database = {
+          imports = [
+            inputs.services-flake.processComposeModules.default
+          ];
+
+          settings.processes.surrealdb = {
+            command = "${lib.getExe pkgs.surrealdb} start --username dbaccess --password=reallybadpassword1";
+          };
+        };
+
         # Flake checks (equivalent to .claude/ hook scripts)
         checks = {
           # Rust compilation check
@@ -282,6 +298,9 @@
 
               # Rust hotreloading web server helper
               trunk
+
+              # SurrealDB database
+              surrealdb
             ]
             ++
             # All the formatter programs
