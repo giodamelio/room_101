@@ -7,6 +7,7 @@ use tracing_subscriber::EnvFilter;
 
 mod db;
 mod error;
+mod middleware;
 mod network;
 mod webserver;
 

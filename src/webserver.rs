@@ -2,67 +2,17 @@ use anyhow::Context;
 use iroh::NodeId;
 use maud::{DOCTYPE, Markup, html};
 use poem::{
-    Endpoint, EndpointExt, IntoResponse, Request, Response, Route, Server,
-    error::ResponseError,
-    get, handler,
-    http::StatusCode,
+    Endpoint, EndpointExt, Route, Server, get, handler,
     listener::TcpListener,
-    middleware::Middleware,
     web::{Data, Form},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::db::{DB, Peer};
 use crate::error::{AppError, Result};
-
-pub struct HtmxErrorMiddleware;
-
-impl<E: Endpoint> Middleware<E> for HtmxErrorMiddleware {
-    type Output = HtmxErrorEndpoint<E>;
-
-    fn transform(&self, ep: E) -> Self::Output {
-        HtmxErrorEndpoint { inner: ep }
-    }
-}
-
-pub struct HtmxErrorEndpoint<E> {
-    inner: E,
-}
-
-impl<E: Endpoint> Endpoint for HtmxErrorEndpoint<E> {
-    type Output = Response;
-
-    async fn call(&self, req: Request) -> poem::Result<Self::Output> {
-        let is_htmx = req.headers().get("hx-request").is_some();
-
-        match self.inner.call(req).await {
-            Ok(resp) => Ok(resp.into_response()),
-            Err(err) => {
-                if is_htmx {
-                    if let Some(app_error) = err.downcast_ref::<AppError>() {
-                        Ok(Response::builder()
-                            .status(app_error.status())
-                            .header("content-type", "text/html")
-                            .header("HX-Retarget", "#error-message")
-                            .header("HX-Reswap", "innerHTML")
-                            .body(app_error.to_string()))
-                    } else {
-                        Ok(Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .header("content-type", "text/html")
-                            .header("HX-Retarget", "#error-message")
-                            .header("HX-Reswap", "innerHTML")
-                            .body("An error occurred".to_string()))
-                    }
-                } else {
-                    Err(err)
-                }
-            }
-        }
-    }
-}
+use crate::middleware::HtmxErrorMiddleware;
 
 fn layout(content: Markup) -> Markup {
     html! {
@@ -128,11 +78,15 @@ async fn create_peer(Data(db): Data<&DB>, form: poem::Result<Form<CreatePeer>>) 
     Ok(tmpl_peer_list(&peers))
 }
 
-pub async fn task(shutdown_tx: broadcast::Sender<()>, db: DB) -> anyhow::Result<()> {
-    let app = Route::new()
+pub fn create_app(db: DB) -> impl Endpoint {
+    Route::new()
         .at("/peers", get(list_peers).post(create_peer))
         .with(HtmxErrorMiddleware)
-        .data(db);
+        .data(db)
+}
+
+pub async fn task(shutdown_tx: broadcast::Sender<()>, db: DB) -> anyhow::Result<()> {
+    let app = create_app(db);
 
     info!("Starting web ui on port 3000");
 
@@ -150,4 +104,142 @@ pub async fn task(shutdown_tx: broadcast::Sender<()>, db: DB) -> anyhow::Result<
         .context("Failed to start web server")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use poem::test::TestClient;
+    use surrealdb::Surreal;
+    use surrealdb::engine::local::Mem;
+
+    #[derive(Serialize)]
+    struct TestCreatePeer {
+        id: String,
+    }
+
+    async fn create_test_db() -> DB {
+        let db: DB = Surreal::new::<Mem>(()).await.unwrap();
+        db.use_ns("test").use_db("test").await.unwrap();
+        crate::db::initialize_database(&db).await.unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn test_list_peers_empty() {
+        let db = create_test_db().await;
+        let app = create_app(db);
+        let client = TestClient::new(app);
+
+        let response = client.get("/peers").send().await;
+        response.assert_status_is_ok();
+
+        let body = response.0.into_body().into_string().await.unwrap();
+        assert!(body.contains("Peers"));
+        assert!(body.contains("Add New Peer"));
+    }
+
+    #[tokio::test]
+    async fn test_create_peer_invalid_node_id() {
+        let db = create_test_db().await;
+        let app = create_app(db);
+        let client = TestClient::new(app);
+
+        let response = client
+            .post("/peers")
+            .form(&TestCreatePeer {
+                id: "invalid-node-id".to_string(),
+            })
+            .send()
+            .await;
+
+        response.assert_status(poem::http::StatusCode::BAD_REQUEST);
+        response
+            .assert_text("Invalid input: Invalid Node ID format: invalid length")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_create_peer_htmx_error_handling() {
+        let db = create_test_db().await;
+        let app = create_app(db);
+        let client = TestClient::new(app);
+
+        let response = client
+            .post("/peers")
+            .header("HX-Request", "true")
+            .form(&TestCreatePeer {
+                id: "invalid-node-id".to_string(),
+            })
+            .send()
+            .await;
+
+        response.assert_status(poem::http::StatusCode::BAD_REQUEST);
+        response.assert_header("HX-Retarget", "#error-message");
+        response.assert_header("HX-Reswap", "innerHTML");
+        response
+            .assert_text("Invalid input: Invalid Node ID format: invalid length")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_create_peer_success() {
+        let db = create_test_db().await;
+        let app = create_app(db);
+        let client = TestClient::new(app);
+
+        // Generate a valid iroh NodeId
+        use iroh::PublicKey;
+        let valid_node_id = PublicKey::from_bytes(&[1u8; 32]).unwrap();
+
+        let response = client
+            .post("/peers")
+            .form(&TestCreatePeer {
+                id: valid_node_id.to_string(),
+            })
+            .send()
+            .await;
+
+        response.assert_status_is_ok();
+
+        let body = response.0.into_body().into_string().await.unwrap();
+        assert!(body.contains("peer-list"));
+        assert!(body.contains(&valid_node_id.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_create_peer_duplicate() {
+        let db = create_test_db().await;
+        let app = create_app(db);
+        let client = TestClient::new(app);
+
+        // Generate a valid iroh NodeId
+        use iroh::PublicKey;
+        let mut key_bytes = [1u8; 32];
+        key_bytes[0] = 2; // Make it different from the first test
+        let valid_node_id = PublicKey::from_bytes(&key_bytes).unwrap();
+
+        // Create the peer first time - should succeed
+        let response = client
+            .post("/peers")
+            .form(&TestCreatePeer {
+                id: valid_node_id.to_string(),
+            })
+            .send()
+            .await;
+        response.assert_status_is_ok();
+
+        // Try to create the same peer again - should fail
+        let response = client
+            .post("/peers")
+            .form(&TestCreatePeer {
+                id: valid_node_id.to_string(),
+            })
+            .send()
+            .await;
+
+        response.assert_status(poem::http::StatusCode::BAD_REQUEST);
+        let body = response.0.into_body().into_string().await.unwrap();
+        assert!(body.contains("already contains"));
+    }
 }
