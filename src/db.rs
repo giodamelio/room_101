@@ -8,6 +8,14 @@ use tracing::{debug, instrument, warn};
 
 pub type DB = Surreal<Db>;
 
+pub async fn initialize_database(db: &DB) -> Result<()> {
+    // Create unique index on node_id field for peers table
+    db.query("DEFINE INDEX unique_node_id ON TABLE peer COLUMNS node_id UNIQUE")
+        .await?;
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
     pub secret_key: SecretKey,
@@ -67,7 +75,7 @@ impl Peer {
             .create("peer")
             .content(peer)
             .await
-            .context("Failed to create peer in database")?;
+            .with_context(|| format!("Failed to create peer in database: {node_id}"))?;
 
         Ok(result)
     }

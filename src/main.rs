@@ -47,6 +47,12 @@ async fn main() -> Result<()> {
         .await
         .context("Error connecting to database")?;
 
+    // Initialize database schema
+    debug!("Initializing database schema");
+    db::initialize_database(&db)
+        .await
+        .context("Failed to initialize database schema")?;
+
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     let iroh_task = tokio::spawn(network::task(db.clone(), shutdown_tx.clone()));
