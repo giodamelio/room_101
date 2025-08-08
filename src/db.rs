@@ -1,10 +1,12 @@
+use anyhow::{Context, Result};
 use iroh::{NodeId, SecretKey};
-use miette::{IntoDiagnostic, Result};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::Db;
 use surrealdb::{Datetime, Surreal};
 use tracing::{debug, instrument, warn};
+
+pub type DB = Surreal<Db>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Identity {
@@ -25,12 +27,48 @@ impl Identity {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Peer {
-    id: NodeId,
-    last_seen: Datetime,
+    #[serde(
+        serialize_with = "serialize_node_id",
+        deserialize_with = "deserialize_node_id"
+    )]
+    pub node_id: NodeId,
+    pub last_seen: Option<Datetime>,
 }
 
-pub type DB = Surreal<Db>;
+fn serialize_node_id<S>(node_id: &NodeId, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&node_id.to_string())
+}
 
-pub async fn get_peers(db: &DB) -> Result<Vec<Peer>> {
-    db.select("peer").await.into_diagnostic()
+fn deserialize_node_id<'de, D>(deserializer: D) -> Result<NodeId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    s.parse().map_err(serde::de::Error::custom)
+}
+
+impl Peer {
+    pub async fn list(db: &DB) -> Result<Vec<Peer>> {
+        db.select("peer")
+            .await
+            .context("Failed to select peers from database")
+    }
+
+    pub async fn create(db: &DB, node_id: NodeId) -> Result<Option<Peer>> {
+        let peer = Peer {
+            node_id,
+            last_seen: None,
+        };
+
+        let result: Option<Peer> = db
+            .create("peer")
+            .content(peer)
+            .await
+            .context("Failed to create peer in database")?;
+
+        Ok(result)
+    }
 }

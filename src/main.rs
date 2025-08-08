@@ -1,4 +1,4 @@
-use miette::{IntoDiagnostic, Result, diagnostic};
+use anyhow::{Context, Result};
 use surrealdb::Surreal;
 use surrealdb::engine::local::SurrealKv;
 use tokio::sync::broadcast;
@@ -41,16 +41,16 @@ async fn main() -> Result<()> {
     debug!("Connecting to SurrealDB database");
     let db: db::DB = Surreal::new::<SurrealKv>("room_101.db")
         .await
-        .into_diagnostic()?;
+        .context("Failed to create SurrealDB instance")?;
     db.use_ns("room_101")
         .use_db("main")
         .await
-        .map_err(|e| diagnostic!("Error connecting to database: {e}"))?;
+        .context("Error connecting to database")?;
 
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     let iroh_task = tokio::spawn(network::task(db.clone(), shutdown_tx.clone()));
-    let webserver_task = tokio::spawn(webserver::task(shutdown_tx.clone()));
+    let webserver_task = tokio::spawn(webserver::task(shutdown_tx.clone(), db.clone()));
 
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.unwrap();
@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
         let _ = shutdown_tx.send(());
     });
 
-    let _ = tokio::try_join!(iroh_task, webserver_task).into_diagnostic()?;
+    let _ = tokio::try_join!(iroh_task, webserver_task).context("Task join failed")?;
 
     info!("Node shutdown complete");
 

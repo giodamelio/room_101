@@ -1,6 +1,6 @@
 use iroh::{Endpoint, Watcher, protocol::Router};
 use iroh_gossip::{ALPN, net::Gossip};
-use miette::{IntoDiagnostic, Result};
+use anyhow::{Context, Result};
 use tokio::sync::broadcast;
 use tracing::{debug, info};
 
@@ -9,7 +9,7 @@ use crate::db;
 pub async fn task(db: db::DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> {
     // Get our identity from the db if it exists, otherwise generate one
     let identity: Option<db::Identity> =
-        db.select(("config", "identity")).await.into_diagnostic()?;
+        db.select(("config", "identity")).await.context("Failed to load identity from database")?;
 
     let identity = match identity {
         Some(identity) => {
@@ -28,7 +28,7 @@ pub async fn task(db: db::DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> 
                 .create(("config", "identity"))
                 .content(new_identity.clone())
                 .await
-                .into_diagnostic()?;
+                .context("Failed to save identity to database")?;
 
             info!(
                 public_key = %new_identity.secret_key.public(),
@@ -40,7 +40,7 @@ pub async fn task(db: db::DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> 
     };
 
     // List our current peers
-    dbg!(db::get_peers(&db).await?);
+    dbg!(db::Peer::list(&db).await?);
 
     // Create endpoint for this node
     debug!("Creating iroh endpoint with identity");
@@ -49,7 +49,7 @@ pub async fn task(db: db::DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> 
         .discovery_n0()
         .bind()
         .await
-        .into_diagnostic()?;
+        .context("Failed to create iroh endpoint")?;
 
     let mut node_addr_watcher = endpoint.node_addr();
     let node_addr = node_addr_watcher.initialized().await;
@@ -81,7 +81,7 @@ pub async fn task(db: db::DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> 
 
     // Shutdown the router
     info!("Iroh listener shutting down gracefully...");
-    router.shutdown().await.into_diagnostic()?;
+    router.shutdown().await.context("Failed to shutdown router")?;
 
     debug!("Iroh listener stopped");
 
