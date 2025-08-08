@@ -6,6 +6,7 @@ use tracing::{debug, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
 mod db;
+mod error;
 mod network;
 mod webserver;
 
