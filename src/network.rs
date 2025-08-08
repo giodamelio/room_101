@@ -1,6 +1,6 @@
+use anyhow::{Context, Result};
 use iroh::{Endpoint, Watcher, protocol::Router};
 use iroh_gossip::{ALPN, net::Gossip};
-use anyhow::{Context, Result};
 use tokio::sync::broadcast;
 use tracing::{debug, info};
 
@@ -8,8 +8,10 @@ use crate::db;
 
 pub async fn task(db: db::DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> {
     // Get our identity from the db if it exists, otherwise generate one
-    let identity: Option<db::Identity> =
-        db.select(("config", "identity")).await.context("Failed to load identity from database")?;
+    let identity: Option<db::Identity> = db
+        .select(("config", "identity"))
+        .await
+        .context("Failed to load identity from database")?;
 
     let identity = match identity {
         Some(identity) => {
@@ -81,7 +83,10 @@ pub async fn task(db: db::DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> 
 
     // Shutdown the router
     info!("Iroh listener shutting down gracefully...");
-    router.shutdown().await.context("Failed to shutdown router")?;
+    router
+        .shutdown()
+        .await
+        .context("Failed to shutdown router")?;
 
     debug!("Iroh listener stopped");
 

@@ -6,7 +6,7 @@ use poem::{
     listener::TcpListener,
     web::{Data, Form},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::sync::broadcast;
 use tracing::info;
 
@@ -110,17 +110,14 @@ pub async fn task(shutdown_tx: broadcast::Sender<()>, db: DB) -> anyhow::Result<
 mod tests {
     use super::*;
     use poem::test::TestClient;
-    use surrealdb::Surreal;
-    use surrealdb::engine::local::Mem;
 
-    #[derive(Serialize)]
+    #[derive(serde::Serialize)]
     struct TestCreatePeer {
         id: String,
     }
 
     async fn create_test_db() -> DB {
-        let db: DB = Surreal::new::<Mem>(()).await.unwrap();
-        db.use_ns("test").use_db("test").await.unwrap();
+        let db = crate::db::new_test().await;
         crate::db::initialize_database(&db).await.unwrap();
         db
     }

@@ -2,14 +2,48 @@ use anyhow::{Context, Result, anyhow};
 use iroh::{NodeId, SecretKey};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
-use surrealdb::engine::local::Db;
+use surrealdb::engine::any::{self, Any};
 use surrealdb::{Datetime, Surreal};
-use tracing::{debug, instrument, warn};
+use tracing::{debug, info, instrument};
+use url::Url;
 
-pub type DB = Surreal<Db>;
+pub type DB = Surreal<Any>;
+
+#[cfg(test)]
+pub async fn new_test() -> DB {
+    let db = any::connect("mem://").await.unwrap();
+    db.use_ns("test").use_db("test").await.unwrap();
+    db
+}
+
+pub async fn connect(url: &str) -> Result<DB> {
+    info!("Connecting to SurrealDB: {}", url);
+
+    let db = any::connect(url)
+        .await
+        .context("Failed to connect to SurrealDB")?;
+
+    // Extract credentials from URL and authenticate
+    if let Ok(parsed_url) = Url::parse(url) {
+        let username = parsed_url.username();
+        if let Some(password) = parsed_url.password() {
+            if !username.is_empty() && !password.is_empty() {
+                db.signin(surrealdb::opt::auth::Root { username, password })
+                    .await
+                    .context("Failed to authenticate with SurrealDB")?;
+            }
+        }
+    }
+
+    db.use_ns("room_101")
+        .use_db("main")
+        .await
+        .context("Failed to set namespace/database")?;
+
+    Ok(db)
+}
 
 pub async fn initialize_database(db: &DB) -> Result<()> {
-    // Create unique index on node_id field for peers table
     db.query("DEFINE INDEX unique_node_id ON TABLE peer COLUMNS node_id UNIQUE")
         .await?;
 

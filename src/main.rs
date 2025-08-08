@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use surrealdb::Surreal;
-use surrealdb::engine::local::SurrealKv;
+use std::env;
 use tokio::sync::broadcast;
 use tracing::{debug, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
@@ -31,6 +30,10 @@ fn setup_tracing() -> Result<()> {
     Ok(())
 }
 
+fn get_database_url() -> String {
+    env::var("DATABASE_URL").unwrap_or_else(|_| "surrealkv://room_101.db".to_string())
+}
+
 #[tokio::main]
 #[instrument]
 async fn main() -> Result<()> {
@@ -41,13 +44,10 @@ async fn main() -> Result<()> {
 
     // Connect to our database
     debug!("Connecting to SurrealDB database");
-    let db: db::DB = Surreal::new::<SurrealKv>("room_101.db")
+    let db_url = get_database_url();
+    let db = db::connect(&db_url)
         .await
-        .context("Failed to create SurrealDB instance")?;
-    db.use_ns("room_101")
-        .use_db("main")
-        .await
-        .context("Error connecting to database")?;
+        .context("Failed to connect to database")?;
 
     // Initialize database schema
     debug!("Initializing database schema");

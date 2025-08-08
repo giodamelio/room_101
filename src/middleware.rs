@@ -1,7 +1,5 @@
 use poem::{
-    Endpoint, IntoResponse, Request, Response,
-    error::ResponseError,
-    http::StatusCode,
+    Endpoint, IntoResponse, Request, Response, error::ResponseError, http::StatusCode,
     middleware::Middleware,
 };
 
@@ -57,12 +55,8 @@ impl<E: Endpoint> Endpoint for HtmxErrorEndpoint<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use poem::{
-        EndpointExt, handler, get, Route,
-        http::StatusCode,
-        test::TestClient,
-    };
     use crate::error::AppError;
+    use poem::{EndpointExt, Route, get, handler, http::StatusCode, test::TestClient};
 
     #[handler]
     async fn success_handler() -> poem::Result<String> {
@@ -82,7 +76,7 @@ mod tests {
 
         let client = TestClient::new(app);
         let response = client.get("/success").send().await;
-        
+
         response.assert_status_is_ok();
         response.assert_text("success").await;
     }
@@ -95,7 +89,7 @@ mod tests {
 
         let client = TestClient::new(app);
         let response = client.get("/error").send().await;
-        
+
         response.assert_status(StatusCode::BAD_REQUEST);
         response.assert_text("Invalid input: test error").await;
     }
@@ -112,7 +106,7 @@ mod tests {
             .header("HX-Request", "true")
             .send()
             .await;
-        
+
         response.assert_status(StatusCode::BAD_REQUEST);
         response.assert_header("HX-Retarget", "#error-message");
         response.assert_header("HX-Reswap", "innerHTML");
@@ -123,7 +117,10 @@ mod tests {
     async fn test_middleware_handles_unknown_errors_for_htmx() {
         #[handler]
         async fn unknown_error_handler() -> poem::Result<String> {
-            Err(poem::Error::from_string("unknown error", StatusCode::INTERNAL_SERVER_ERROR))
+            Err(poem::Error::from_string(
+                "unknown error",
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ))
         }
 
         let app = Route::new()
@@ -136,7 +133,7 @@ mod tests {
             .header("HX-Request", "true")
             .send()
             .await;
-        
+
         response.assert_status(StatusCode::INTERNAL_SERVER_ERROR);
         response.assert_header("HX-Retarget", "#error-message");
         response.assert_header("HX-Reswap", "innerHTML");
