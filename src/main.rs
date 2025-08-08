@@ -1,6 +1,7 @@
 use iroh::{Endpoint, NodeAddr, NodeId, SecretKey, Watcher, protocol::Router};
 use iroh_gossip::{ALPN, net::Gossip};
 use miette::{IntoDiagnostic, Result, diagnostic};
+use poem::{IntoResponse, Route, Server, get, handler, listener::TcpListener, web::Path};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
 use std::{env, str::FromStr};
@@ -32,50 +33,7 @@ struct Peer {
     last_seen: Datetime,
 }
 
-/// Initialize simple tracing-based logging to stdout
-fn setup_tracing() -> Result<()> {
-    // Set up environment filter
-    // Default to INFO level, but allow override with RUST_LOG environment variable
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("room_101=info,iroh=error,iroh_gossip=error"));
-
-    // Initialize the subscriber with structured logging to stdout
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_target(true)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false)
-        .compact()
-        .init();
-
-    Ok(())
-}
-
-type DB = Surreal<Db>;
-
-async fn get_peers(db: &DB) -> Result<Vec<Peer>> {
-    db.select("peer").await.into_diagnostic()
-}
-
-#[tokio::main]
-#[instrument]
-async fn main() -> Result<()> {
-    // Initialize tracing first
-    setup_tracing()?;
-
-    info!("Starting Room 101");
-
-    // Connect to our database
-    debug!("Connecting to SurrealDB database");
-    let db: DB = Surreal::new::<SurrealKv>("room_101.db")
-        .await
-        .into_diagnostic()?;
-    db.use_ns("room_101")
-        .use_db("main")
-        .await
-        .map_err(|e| diagnostic!("Error connecting to database: {e}"))?;
-
+async fn iroh(db: DB) -> Result<()> {
     // Get our identity from the db if it exists, otherwise generate one
     let identity: Option<Identity> = db.select(("config", "identity")).await.into_diagnostic()?;
     let identity = match identity {
@@ -182,6 +140,76 @@ async fn main() -> Result<()> {
 
     info!("Received shutdown signal, gracefully shutting down...");
     router.shutdown().await.into_diagnostic()?;
+
+    Ok(())
+}
+
+#[handler]
+fn hello(Path(name): Path<String>) -> String {
+    format!("hello: {name}")
+}
+
+async fn webserver() -> Result<()> {
+    let app = Route::new().at("/hello/:name", get(hello));
+
+    info!("Starting web ui on port 3000");
+
+    Server::new(TcpListener::bind("0.0.0.0:3000"))
+        .run(app)
+        .await
+        .into_diagnostic()?;
+
+    Ok(())
+}
+
+/// Initialize simple tracing-based logging to stdout
+fn setup_tracing() -> Result<()> {
+    // Set up environment filter
+    // Default to INFO level, but allow override with RUST_LOG environment variable
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("room_101=info,iroh=error,iroh_gossip=error"));
+
+    // Initialize the subscriber with structured logging to stdout
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .compact()
+        .init();
+
+    Ok(())
+}
+
+type DB = Surreal<Db>;
+
+async fn get_peers(db: &DB) -> Result<Vec<Peer>> {
+    db.select("peer").await.into_diagnostic()
+}
+
+#[tokio::main]
+#[instrument]
+async fn main() -> Result<()> {
+    // Initialize tracing first
+    setup_tracing()?;
+
+    info!("Starting Room 101");
+
+    // Connect to our database
+    debug!("Connecting to SurrealDB database");
+    let db: DB = Surreal::new::<SurrealKv>("room_101.db")
+        .await
+        .into_diagnostic()?;
+    db.use_ns("room_101")
+        .use_db("main")
+        .await
+        .map_err(|e| diagnostic!("Error connecting to database: {e}"))?;
+
+    let iroh_task = tokio::spawn(iroh(db.clone()));
+    let webserver_task = tokio::spawn(webserver());
+
+    tokio::try_join!(iroh_task, webserver_task).into_diagnostic()?;
 
     info!("Node shutdown complete");
 
