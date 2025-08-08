@@ -1,5 +1,6 @@
 use iroh::{Endpoint, NodeId, SecretKey, Watcher, protocol::Router};
 use iroh_gossip::{ALPN, net::Gossip};
+use maud::{Markup, html};
 use miette::{IntoDiagnostic, Result, diagnostic};
 use poem::{Route, Server, get, handler, listener::TcpListener, web::Path};
 use rand::rngs;
@@ -114,8 +115,11 @@ async fn iroh(db: DB, shutdown_tx: broadcast::Sender<()>) -> Result<()> {
 }
 
 #[handler]
-fn hello(Path(name): Path<String>) -> String {
-    format!("hello: {name}")
+fn hello(Path(name): Path<String>) -> Markup {
+    html! {
+        h1 { "Hello World!" }
+        p { "hello " (name) }
+    }
 }
 
 async fn webserver(shutdown_tx: broadcast::Sender<()>) -> Result<()> {
