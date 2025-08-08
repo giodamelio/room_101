@@ -22,7 +22,7 @@ fn layout(content: Markup) -> Markup {
     }
 }
 
-fn tmpl_list_peers(peers: Vec<Peer>, error: Option<&str>) -> Markup {
+fn tmpl_list_peers(peers: Vec<Peer>) -> Markup {
     layout(html! {
         h1 { "Peers" }
         ul {
@@ -32,9 +32,6 @@ fn tmpl_list_peers(peers: Vec<Peer>, error: Option<&str>) -> Markup {
         }
 
         h2 { "Add New Peer" }
-        @if let Some(err) = error {
-            p style="color: red;" { "Error: " (err) }
-        }
         form method="POST" action="/peers" {
             input type="text" name="id" placeholder="Node ID" required;
             input type="submit" value="Add Peer";
@@ -46,7 +43,7 @@ fn tmpl_list_peers(peers: Vec<Peer>, error: Option<&str>) -> Markup {
 async fn list_peers(Data(db): Data<&DB>) -> Result<Markup> {
     let peers = Peer::list(db).await?;
 
-    Ok(tmpl_list_peers(peers, None))
+    Ok(tmpl_list_peers(peers))
 }
 
 #[derive(Deserialize, Debug)]
@@ -56,44 +53,17 @@ struct CreatePeer {
 
 #[handler]
 async fn create_peer(Data(db): Data<&DB>, form: poem::Result<Form<CreatePeer>>) -> Result<Markup> {
-    let mut peers = Peer::list(db).await?;
+    let Form(CreatePeer { id }) =
+        form.map_err(|e| anyhow::anyhow!("Invalid Node ID format: {e}"))?;
 
-    let Form(CreatePeer { id }) = match form {
-        Ok(form) => form,
-        Err(e) => {
-            return Ok(tmpl_list_peers(
-                peers,
-                Some(&format!("Invalid Node ID format: {e}")),
-            ));
-        }
-    };
+    let node_id = id
+        .parse::<NodeId>()
+        .map_err(|e| anyhow::anyhow!("Invalid Node ID format: {e}"))?;
 
-    info!("Adding peer with ID: {}", id);
+    Peer::create(db, node_id).await?;
 
-    // Parse the string to NodeId
-    let node_id = match id.parse::<NodeId>() {
-        Ok(node_id) => node_id,
-        Err(e) => {
-            return Ok(tmpl_list_peers(
-                peers,
-                Some(&format!("Invalid Node ID format: {e}")),
-            ));
-        }
-    };
-
-    // Create the peer in the database
-    match Peer::create(db, node_id).await {
-        Ok(_) => info!("Successfully added peer with ID: {id}"),
-        Err(e) => {
-            return Ok(tmpl_list_peers(
-                peers,
-                Some(&format!("Failed to create peer: {e}")),
-            ));
-        }
-    }
-
-    peers = Peer::list(db).await?;
-    Ok(tmpl_list_peers(peers, None))
+    let peers = Peer::list(db).await?;
+    Ok(tmpl_list_peers(peers))
 }
 
 pub async fn task(shutdown_tx: broadcast::Sender<()>, db: DB) -> Result<()> {

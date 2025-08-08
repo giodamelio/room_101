@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use iroh::{NodeId, SecretKey};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
@@ -71,12 +71,9 @@ impl Peer {
             last_seen: None,
         };
 
-        let result: Option<Peer> = db
-            .create("peer")
+        db.create("peer")
             .content(peer)
             .await
-            .with_context(|| format!("Failed to create peer in database: {node_id}"))?;
-
-        Ok(result)
+            .map_err(|e| anyhow!("Failed to create peer: {}", e))
     }
 }
