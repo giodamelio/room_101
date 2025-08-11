@@ -353,6 +353,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a89cbf775b137e9b968e67227ef7f775587cde3fd31b0d8599dbd0f598a48340"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "atomic-polyfill"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -605,6 +614,20 @@ name = "bytemuck"
 version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c76a5792e44e4abe34d3abf15636779261d45a7450612059293d1d2cfc63422"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f154e572231cb6ba2bd1176980827e3d5dc04cc183a75dea38109fbdd672d29"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
 
 [[package]]
 name = "byteorder"
@@ -674,7 +697,7 @@ dependencies = [
  "lalrpop",
  "lalrpop-util",
  "lazy_static",
- "miette",
+ "miette 5.10.0",
  "regex",
  "rustc_lexer",
  "serde",
@@ -2934,9 +2957,20 @@ version = "5.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59bb584eaeeab6bd0226ccf3509a69d7936d148cf3d036ad350abe35e8c6856e"
 dependencies = [
- "miette-derive",
+ "miette-derive 5.10.0",
  "once_cell",
  "thiserror 1.0.69",
+ "unicode-width",
+]
+
+[[package]]
+name = "miette"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f98efec8807c63c752b5bd61f862c165c115b0a35685bdcfd9238c7aeb592b7"
+dependencies = [
+ "cfg-if",
+ "miette-derive 7.6.0",
  "unicode-width",
 ]
 
@@ -2945,6 +2979,17 @@ name = "miette-derive"
 version = "5.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49e7bc1560b95a3c4a25d03de42fe76ca718ab92d1a22a55b9b4cf67b3ae635c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "miette-derive"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4576,6 +4621,7 @@ dependencies = [
  "surrealdb",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-graceful-shutdown",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -5695,6 +5741,23 @@ dependencies = [
  "socket2 0.6.0",
  "tokio-macros",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "tokio-graceful-shutdown"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75ddc890a3cd9a4a253244eb3222c101b39e6e8081847854b45241d5c0805181"
+dependencies = [
+ "async-trait",
+ "atomic",
+ "bytemuck",
+ "miette 7.6.0",
+ "pin-project-lite",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

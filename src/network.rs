@@ -1,18 +1,13 @@
 use anyhow::{Context, Result};
 use iroh::{Endpoint, Watcher, protocol::Router};
 use iroh_gossip::{ALPN, net::Gossip};
-use tokio::sync::mpsc;
+use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::{debug, info};
 
 use crate::db;
 
-#[derive(Debug)]
-pub enum IrohMessage {
-    Shutdown,
-}
-
-pub async fn iroh_task(db: db::DB, mut rx: mpsc::Receiver<IrohMessage>) -> Result<()> {
-    info!("Iroh task started");
+pub async fn iroh_subsystem(subsys: SubsystemHandle, db: db::DB) -> Result<()> {
+    info!("Iroh subsystem started");
 
     // Get our identity from the db if it exists, otherwise generate one
     let identity: Option<db::Identity> = db
@@ -84,17 +79,10 @@ pub async fn iroh_task(db: db::DB, mut rx: mpsc::Receiver<IrohMessage>) -> Resul
         node_addr.node_id
     );
 
-    // Wait for shutdown message
-    while let Some(message) = rx.recv().await {
-        match message {
-            IrohMessage::Shutdown => {
-                info!("Iroh received shutdown signal");
-                break;
-            }
-        }
-    }
+    // Wait for shutdown signal
+    subsys.on_shutdown_requested().await;
+    info!("Iroh received shutdown signal");
 
-    info!("Iroh task stopped");
+    info!("Iroh subsystem stopped");
     Ok(())
 }
-

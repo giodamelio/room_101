@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use std::{env, time::Duration};
-use tokio::sync::mpsc;
+use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use heartbeat::{HeartbeatMessage, heartbeat_task};
-use network::{IrohMessage, iroh_task};
-use webserver::{WebServerMessage, webserver_task};
+use heartbeat::heartbeat_subsystem;
+use network::iroh_subsystem;
+use webserver::webserver_subsystem;
 
 mod db;
 mod error;
@@ -59,35 +59,25 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to initialize database schema")?;
 
-    // Create channels for each task
-    let (heartbeat_tx, heartbeat_rx) = mpsc::channel::<HeartbeatMessage>(32);
-    let (webserver_tx, webserver_rx) = mpsc::channel::<WebServerMessage>(32);
-    let (iroh_tx, iroh_rx) = mpsc::channel::<IrohMessage>(32);
+    // Create the top level
+    Toplevel::new(|s| async move {
+        s.start(SubsystemBuilder::new("heartbeat", {
+            let db = db.clone();
+            move |subsys| heartbeat_subsystem(subsys, db, Duration::from_secs(2))
+        }));
 
-    // Spawn tasks
-    let heartbeat_handle = tokio::spawn(heartbeat_task(
-        db.clone(),
-        Duration::from_secs(2),
-        heartbeat_rx,
-    ));
+        s.start(SubsystemBuilder::new("webserver", {
+            let db = db.clone();
+            move |subsys| webserver_subsystem(subsys, db)
+        }));
 
-    let webserver_handle = tokio::spawn(webserver_task(db.clone(), webserver_rx));
-
-    let iroh_handle = tokio::spawn(iroh_task(db.clone(), iroh_rx));
-
-    // Wait for Ctrl+C
-    tokio::signal::ctrl_c().await.unwrap();
-    info!("Received Ctrl+C, initiating graceful shutdown...");
-
-    // Send shutdown messages to all tasks
-    let _ = heartbeat_tx.send(HeartbeatMessage::Shutdown).await;
-    let _ = webserver_tx.send(WebServerMessage::Shutdown).await;
-    let _ = iroh_tx.send(IrohMessage::Shutdown).await;
-
-    // Wait for all tasks to complete
-    let _ = tokio::try_join!(heartbeat_handle, webserver_handle, iroh_handle);
-
-    info!("Node shutdown complete");
-
-    Ok(())
+        s.start(SubsystemBuilder::new("iroh", {
+            let db = db.clone();
+            move |subsys| iroh_subsystem(subsys, db)
+        }));
+    })
+    .catch_signals()
+    .handle_shutdown_requests(Duration::from_secs(30))
+    .await
+    .map_err(Into::into)
 }

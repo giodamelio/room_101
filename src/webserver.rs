@@ -1,22 +1,19 @@
 use iroh::NodeId;
-use maud::{html, Markup, DOCTYPE};
+use maud::{DOCTYPE, Markup, html};
 use poem::{
-    get, handler, listener::TcpListener, web::{Data, Form}, Endpoint, EndpointExt, Route, Server,
+    Endpoint, EndpointExt, Route, Server, get, handler,
+    listener::TcpListener,
+    web::{Data, Form},
 };
 use serde::Deserialize;
-use tokio::sync::{mpsc, oneshot};
+use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::info;
 
 use crate::{
-    db::{Peer, DB},
+    db::{DB, Peer},
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
 };
-
-#[derive(Debug)]
-pub enum WebServerMessage {
-    Shutdown,
-}
 
 fn layout(content: Markup) -> Markup {
     html! {
@@ -88,47 +85,46 @@ pub fn create_app(db: DB) -> impl Endpoint {
         .data(db)
 }
 
-async fn run_server(app: impl Endpoint + 'static, shutdown_rx: oneshot::Receiver<()>) {
+async fn server_subsystem(
+    subsys: SubsystemHandle,
+    app: impl Endpoint + 'static,
+) -> anyhow::Result<()> {
     let result = Server::new(TcpListener::bind("0.0.0.0:3000"))
         .run_with_graceful_shutdown(
             app,
             async {
-                let _ = shutdown_rx.await;
-                info!("WebServer received shutdown signal");
+                subsys.on_shutdown_requested().await;
+                info!("Poem server received shutdown signal");
             },
             Some(std::time::Duration::from_secs(30)),
         )
         .await;
 
     match result {
-        Ok(_) => info!("WebServer shutdown complete"),
-        Err(e) => tracing::error!("WebServer error: {}", e),
+        Ok(_) => info!("Poem server shutdown complete"),
+        Err(e) => tracing::error!("Poem server error: {}", e),
     }
+
+    Ok(())
 }
 
-pub async fn webserver_task(db: DB, mut rx: mpsc::Receiver<WebServerMessage>) {
-    info!("WebServer task started");
+pub async fn webserver_subsystem(subsys: SubsystemHandle, db: DB) -> anyhow::Result<()> {
+    info!("WebServer subsystem started");
 
     let app = create_app(db);
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    // Spawn the server
-    let server_handle = tokio::spawn(run_server(app, shutdown_rx));
+    // Start the server as a nested subsystem
+    subsys.start(tokio_graceful_shutdown::SubsystemBuilder::new(
+        "poem-server",
+        move |server_subsys| server_subsystem(server_subsys, app),
+    ));
 
-    // Wait for shutdown message
-    while let Some(message) = rx.recv().await {
-        match message {
-            WebServerMessage::Shutdown => {
-                info!("WebServer task received shutdown message");
-                let _ = shutdown_tx.send(());
-                break;
-            }
-        }
-    }
+    // Wait for shutdown signal
+    subsys.on_shutdown_requested().await;
+    info!("WebServer subsystem received shutdown signal");
 
-    // Wait for server to shut down
-    let _ = server_handle.await;
-    info!("WebServer task stopped");
+    info!("WebServer subsystem stopped");
+    Ok(())
 }
 
 #[cfg(test)]
