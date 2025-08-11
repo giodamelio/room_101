@@ -1,0 +1,1 @@
+{"type":"entity","name":"user_preference_cargo_check","entityType":"user_preference","observations":["User wants me to call `cargo check` before finishing any task where I modified Rust source files"]}

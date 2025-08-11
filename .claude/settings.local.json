@@ -8,7 +8,8 @@
       "mcp__sequential-thinking__sequentialthinking",
       "Bash(grep:*)",
       "Bash(mv:*)",
-      "Bash(DATABASE_URL=ws://dbaccess:reallybadpassword1@localhost:8000 cargo run)"
+      "Bash(DATABASE_URL=ws://dbaccess:reallybadpassword1@localhost:8000 cargo run)",
+      "WebFetch(domain:docs.rs)"
     ]
   },
   "enableAllProjectMcpServers": true,

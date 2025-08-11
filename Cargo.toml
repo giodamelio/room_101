@@ -14,6 +14,8 @@ hex = "0.4"
 surrealdb = { version = "2.3.7", features = ["kv-surrealkv", "kv-mem", "protocol-ws", "protocol-http"] }
 serde = { version = "1.0.219", features = ["derive"] }
 rand = "0.8.5"
+ractor = "0.13"
+async-trait = "0.1"
 
 # Tracing and logging
 tracing = "0.1"
