@@ -301,6 +301,9 @@
 
               # SurrealDB database
               surrealdb
+              
+              # Mold fast linker
+              mold
             ]
             ++
             # All the formatter programs
@@ -310,6 +313,9 @@
             # Set up MCP environment
             export MEMORY_FILE_PATH=$(pwd)/.claude/memory.json
             ln -sf ${mcpConfig} .mcp.json
+            
+            # Configure Rust to use mold linker
+            export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
           '';
         };
       };
