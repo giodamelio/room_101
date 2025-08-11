@@ -1,17 +1,16 @@
 use anyhow::{Context, Result};
-use heartbeat::{HeartbeatActor, HeartbeatArgs};
-use management::{ActorType, Management, ManagementMessage};
-use network::{IrohActor, IrohArgs};
-use ractor::Actor;
 use std::{env, time::Duration};
-use tracing::{debug, info};
+use tokio::sync::mpsc;
+use tracing::info;
 use tracing_subscriber::EnvFilter;
-use webserver::{WebServerActor, WebServerArgs};
+
+use heartbeat::{HeartbeatMessage, heartbeat_task};
+use network::{IrohMessage, iroh_task};
+use webserver::{WebServerMessage, webserver_task};
 
 mod db;
 mod error;
 mod heartbeat;
-mod management;
 mod middleware;
 mod network;
 mod webserver;
@@ -48,70 +47,45 @@ async fn main() -> Result<()> {
     info!("Starting Room 101");
 
     // Connect to our database
-    debug!("Connecting to SurrealDB database");
+    tracing::debug!("Connecting to SurrealDB database");
     let db_url = get_database_url();
     let db = db::connect(&db_url)
         .await
         .context("Failed to connect to database")?;
 
     // Initialize database schema
-    debug!("Initializing database schema");
+    tracing::debug!("Initializing database schema");
     db::initialize_database(&db)
         .await
         .context("Failed to initialize database schema")?;
 
-    // Start actors using Ractor
-    let heartbeat_args = HeartbeatArgs {
-        db: db.clone(),
-        interval: Duration::from_secs(2),
-    };
-    let (heartbeat_actor, heartbeat_handle) =
-        Actor::spawn(None, HeartbeatActor::new(), heartbeat_args)
-            .await
-            .context("Failed to start heartbeat actor")?;
+    // Create channels for each task
+    let (heartbeat_tx, heartbeat_rx) = mpsc::channel::<HeartbeatMessage>(32);
+    let (webserver_tx, webserver_rx) = mpsc::channel::<WebServerMessage>(32);
+    let (iroh_tx, iroh_rx) = mpsc::channel::<IrohMessage>(32);
 
-    let webserver_args = WebServerArgs { db: db.clone() };
-    let (webserver_actor, webserver_handle) =
-        Actor::spawn(None, WebServerActor::new(), webserver_args)
-            .await
-            .context("Failed to start webserver actor")?;
+    // Spawn tasks
+    let heartbeat_handle = tokio::spawn(heartbeat_task(
+        db.clone(),
+        Duration::from_secs(2),
+        heartbeat_rx,
+    ));
 
-    let iroh_args = IrohArgs { db: db.clone() };
-    let (iroh_actor, iroh_handle) = Actor::spawn(None, IrohActor::new(), iroh_args)
-        .await
-        .context("Failed to start iroh actor")?;
+    let webserver_handle = tokio::spawn(webserver_task(db.clone(), webserver_rx));
 
-    // Start up the management actor and tell it about the other actors
-    let (management_actor, management_handle) = Actor::spawn(None, Management::new(), ())
-        .await
-        .context("Failed to start management actor")?;
+    let iroh_handle = tokio::spawn(iroh_task(db.clone(), iroh_rx));
 
-    // Register actors with management
-    management_actor.send_message(ManagementMessage::RegisterActor(ActorType::Heartbeat(
-        heartbeat_actor,
-    )))?;
-
-    management_actor.send_message(ManagementMessage::RegisterActor(ActorType::Webserver(
-        webserver_actor,
-    )))?;
-
-    management_actor.send_message(ManagementMessage::RegisterActor(ActorType::Iroh(
-        iroh_actor,
-    )))?;
-
+    // Wait for Ctrl+C
     tokio::signal::ctrl_c().await.unwrap();
     info!("Received Ctrl+C, initiating graceful shutdown...");
 
-    // Send the shutdown signal to management
-    management_actor.send_message(ManagementMessage::Shutdown)?;
+    // Send shutdown messages to all tasks
+    let _ = heartbeat_tx.send(HeartbeatMessage::Shutdown).await;
+    let _ = webserver_tx.send(WebServerMessage::Shutdown).await;
+    let _ = iroh_tx.send(IrohMessage::Shutdown).await;
 
-    // Wait for all actors to finish
-    let _ = tokio::try_join!(
-        heartbeat_handle,
-        webserver_handle,
-        iroh_handle,
-        management_handle
-    );
+    // Wait for all tasks to complete
+    let _ = tokio::try_join!(heartbeat_handle, webserver_handle, iroh_handle);
 
     info!("Node shutdown complete");
 

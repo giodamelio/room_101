@@ -1,21 +1,22 @@
 use iroh::NodeId;
-use maud::{DOCTYPE, Markup, html};
+use maud::{html, Markup, DOCTYPE};
 use poem::{
-    Endpoint, EndpointExt, Route, Server, get, handler,
-    listener::TcpListener,
-    web::{Data, Form},
+    get, handler, listener::TcpListener, web::{Data, Form}, Endpoint, EndpointExt, Route, Server,
 };
-use ractor::{Actor, ActorProcessingErr, ActorRef};
 use serde::Deserialize;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 
-use crate::error::{AppError, Result};
-use crate::middleware::HtmxErrorMiddleware;
 use crate::{
-    db::{DB, Peer},
-    management::WebServerMessage,
+    db::{Peer, DB},
+    error::{AppError, Result},
+    middleware::HtmxErrorMiddleware,
 };
+
+#[derive(Debug)]
+pub enum WebServerMessage {
+    Shutdown,
+}
 
 fn layout(content: Markup) -> Markup {
     html! {
@@ -55,7 +56,6 @@ fn tmpl_list_peers(peers: Vec<Peer>) -> Markup {
 #[handler]
 async fn list_peers(Data(db): Data<&DB>) -> Result<Markup> {
     let peers = Peer::list(db).await?;
-
     Ok(tmpl_list_peers(peers))
 }
 
@@ -88,113 +88,47 @@ pub fn create_app(db: DB) -> impl Endpoint {
         .data(db)
 }
 
-pub struct WebServerActor;
+async fn run_server(app: impl Endpoint + 'static, shutdown_rx: oneshot::Receiver<()>) {
+    let result = Server::new(TcpListener::bind("0.0.0.0:3000"))
+        .run_with_graceful_shutdown(
+            app,
+            async {
+                let _ = shutdown_rx.await;
+                info!("WebServer received shutdown signal");
+            },
+            Some(std::time::Duration::from_secs(30)),
+        )
+        .await;
 
-impl WebServerActor {
-    pub fn new() -> Self {
-        Self
+    match result {
+        Ok(_) => info!("WebServer shutdown complete"),
+        Err(e) => tracing::error!("WebServer error: {}", e),
     }
 }
 
-#[derive(Debug)]
-pub struct WebServerState {
-    db: DB,
-    shutdown_tx: Option<oneshot::Sender<()>>,
-    server_handle: Option<tokio::task::JoinHandle<std::result::Result<(), std::io::Error>>>,
-}
+pub async fn webserver_task(db: DB, mut rx: mpsc::Receiver<WebServerMessage>) {
+    info!("WebServer task started");
 
-#[derive(Debug)]
-pub struct WebServerArgs {
-    pub db: DB,
-}
+    let app = create_app(db);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-#[async_trait::async_trait]
-impl Actor for WebServerActor {
-    type Msg = WebServerMessage;
-    type State = WebServerState;
-    type Arguments = WebServerArgs;
+    // Spawn the server
+    let server_handle = tokio::spawn(run_server(app, shutdown_rx));
 
-    async fn pre_start(
-        &self,
-        _myself: ActorRef<Self::Msg>,
-        args: Self::Arguments,
-    ) -> std::result::Result<Self::State, ActorProcessingErr> {
-        info!("WebServer actor started");
-
-        let app = create_app(args.db.clone());
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-
-        // Start the web server in the background
-        let server_handle = tokio::spawn(async move {
-            info!("Starting web ui on port 3000");
-
-            let result = Server::new(TcpListener::bind("0.0.0.0:3000"))
-                .run_with_graceful_shutdown(
-                    app,
-                    async move {
-                        let _ = shutdown_rx.await;
-                        info!("Poem server received shutdown signal");
-                    },
-                    Some(std::time::Duration::from_secs(30)), // 30 second graceful shutdown timeout
-                )
-                .await;
-
-            match &result {
-                Ok(_) => info!("Poem server shutdown complete"),
-                Err(e) => tracing::error!("Web server error: {}", e),
-            }
-
-            result
-        });
-
-        Ok(WebServerState {
-            db: args.db,
-            shutdown_tx: Some(shutdown_tx),
-            server_handle: Some(server_handle),
-        })
-    }
-
-    async fn handle(
-        &self,
-        _myself: ActorRef<Self::Msg>,
-        message: Self::Msg,
-        state: &mut Self::State,
-    ) -> std::result::Result<(), ActorProcessingErr> {
+    // Wait for shutdown message
+    while let Some(message) = rx.recv().await {
         match message {
             WebServerMessage::Shutdown => {
-                info!("WebServer received shutdown signal, cleaning up...");
-
-                if let Some(shutdown_tx) = state.shutdown_tx.take() {
-                    let _ = shutdown_tx.send(());
-                }
-
-                // Wait for the server task to complete (no timeout - give it all the time it needs)
-                if let Some(server_handle) = state.server_handle.take() {
-                    info!("Waiting for Poem server task to complete...");
-                    let _ = server_handle.await;
-                    info!("Poem server task finished gracefully");
-                }
-
-                // Stop the actor after shutdown
-                _myself.stop(None);
+                info!("WebServer task received shutdown message");
+                let _ = shutdown_tx.send(());
+                break;
             }
         }
-        Ok(())
     }
 
-    async fn post_stop(
-        &self,
-        _myself: ActorRef<Self::Msg>,
-        state: &mut Self::State,
-    ) -> std::result::Result<(), ActorProcessingErr> {
-        info!("WebServer actor stopping, signaling Poem server shutdown");
-
-        if let Some(shutdown_tx) = state.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
-        }
-
-        Ok(())
-    }
+    // Wait for server to shut down
+    let _ = server_handle.await;
+    info!("WebServer task stopped");
 }
 
 #[cfg(test)]
