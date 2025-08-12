@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::marker::PhantomData;
 use std::time::Duration;
 
@@ -6,7 +7,7 @@ use chrono::Utc;
 use ed25519_dalek::Signature;
 use iroh::{Endpoint, NodeId, Watcher, protocol::Router};
 use iroh::{PublicKey, SecretKey};
-use iroh_gossip::api::{Event, GossipReceiver, GossipSender};
+use iroh_gossip::api::{GossipReceiver, GossipSender};
 use iroh_gossip::{ALPN, net::Gossip, proto::TopicId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use surrealdb::Datetime;
@@ -16,7 +17,7 @@ use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, trace};
 
-use crate::db::{self, Identity};
+use crate::db::{self, Event, EventType, Identity};
 use crate::utils::topic_id;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,8 +61,8 @@ trait MessageSigner: Serialize + DeserializeOwned {
 
 impl MessageSigner for PeerMessage {}
 
-#[derive(Debug, Serialize, Deserialize)]
-enum PeerMessage {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PeerMessage {
     Joined {
         node_id: NodeId,
         time: Datetime,
@@ -82,6 +83,17 @@ enum PeerMessage {
     },
 }
 
+impl Display for PeerMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PeerMessage::Joined { .. } => f.write_str("JOINED"),
+            PeerMessage::Leaving { .. } => f.write_str("LEAVING"),
+            PeerMessage::Introduction { .. } => f.write_str("INTRODUCTION"),
+            PeerMessage::Heartbeat { .. } => f.write_str("HEARTBEAT"),
+        }
+    }
+}
+
 const PEER_TOPIC: TopicId = topic_id!("PEER_TOPIC");
 
 /// Get the systems hostname, returns None if unable
@@ -89,6 +101,31 @@ fn get_hostname() -> Option<String> {
     hostname::get()
         .map(|h| h.to_string_lossy().to_string())
         .ok()
+}
+
+async fn send_peer_message(
+    db: &db::DB,
+    peer_message_tx: mpsc::Sender<PeerMessage>,
+    message: PeerMessage,
+) -> Result<()> {
+    // Send the actual message
+    peer_message_tx.send(message.clone()).await?;
+
+    // Create a log about sending the message (unless it is a heartbeat)
+    if matches!(message, PeerMessage::Heartbeat { .. }) {
+        return Ok(());
+    }
+
+    Event::log(
+        db,
+        EventType::PeerMessage {
+            message_type: message.to_string(),
+        },
+        "Send peer message".into(),
+    )
+    .await?;
+
+    Ok(())
 }
 
 pub async fn iroh_subsystem(
@@ -218,35 +255,47 @@ pub async fn iroh_subsystem(
     ));
 
     // Send heartbeat
+    let heartbeat_db = db.clone();
     let heartbeat_peer_message_sender = peer_message_tx.clone();
     let heartbeat_identity = identity.clone();
     subsys.start(SubsystemBuilder::new(
         "peer-message-hearbeat",
         move |subsys| {
-            peer_message_heartbeat(subsys, heartbeat_identity, heartbeat_peer_message_sender)
+            peer_message_heartbeat(
+                subsys,
+                heartbeat_db,
+                heartbeat_identity,
+                heartbeat_peer_message_sender,
+            )
         },
     ));
 
     // Send our welcome message
-    peer_message_tx
-        .send(PeerMessage::Joined {
+    send_peer_message(
+        &db,
+        peer_message_tx.clone(),
+        PeerMessage::Joined {
             node_id: identity.id(),
             time: Datetime::from(Utc::now()),
             hostname: get_hostname(),
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     // Wait for shutdown signal
     subsys.on_shutdown_requested().await;
 
     // Send our leaving event
     info!("Sending leaving message...");
-    peer_message_tx
-        .send(PeerMessage::Leaving {
+    send_peer_message(
+        &db,
+        peer_message_tx.clone(),
+        PeerMessage::Leaving {
             node_id: identity.id(),
             time: Datetime::from(Utc::now()),
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     // Wait for message propagation - this is unfortunately necessary
     // because gossip protocols need time to deliver messages to peers over the network
@@ -268,7 +317,7 @@ async fn peer_message_handler(
     db: db::DB,
 ) -> anyhow::Result<()> {
     while let Some(event) = peer_reciever.try_next().await? {
-        if let Event::Received(message) = event {
+        if let iroh_gossip::api::Event::Received(message) = event {
             let (_from, message): (NodeId, PeerMessage) =
                 SignedMessage::verify_and_decode(&message.content)?;
 
@@ -288,13 +337,16 @@ async fn peer_message_handler(
                     }
 
                     // Send an introduction to the network
-                    peer_message_tx
-                        .send(PeerMessage::Introduction {
+                    send_peer_message(
+                        &db,
+                        peer_message_tx.clone(),
+                        PeerMessage::Introduction {
                             node_id: identity.id(),
                             time: Datetime::from(Utc::now()),
                             hostname,
-                        })
-                        .await?;
+                        },
+                    )
+                    .await?;
                 }
                 PeerMessage::Leaving { node_id, time } => {
                     trace!(%node_id, %time, "Handling PeerMessage::Leaving");
@@ -361,6 +413,7 @@ async fn peer_message_sender(
 
 async fn peer_message_heartbeat(
     subsys: SubsystemHandle,
+    db: db::DB,
     identity: Identity,
     peer_message_tx: mpsc::Sender<PeerMessage>,
 ) -> anyhow::Result<()> {
@@ -369,12 +422,15 @@ async fn peer_message_heartbeat(
     loop {
         select! {
             _ = ticker.tick() => {
-                peer_message_tx
-                    .send(PeerMessage::Heartbeat {
+                    send_peer_message(
+                        &db,
+                        peer_message_tx.clone(),
+                    PeerMessage::Heartbeat {
                         node_id: identity.id(),
                         time: Datetime::from(Utc::now()),
-                    })
-                .await?;
+                    }
+                    )
+                    .await?;
             }
             _ = subsys.on_shutdown_requested() => {
                 break

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use chrono::Utc;
 use iroh::{NodeId, SecretKey};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
@@ -6,6 +7,8 @@ use surrealdb::engine::any::{self, Any};
 use surrealdb::{Datetime, Surreal};
 use tracing::{debug, info, instrument};
 use url::Url;
+
+use crate::network::PeerMessage;
 
 pub type DB = Surreal<Any>;
 
@@ -162,5 +165,33 @@ impl Peer {
         debug!("Successfully upserted {} peers", peer_count);
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EventType {
+    PeerMessage { message_type: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Event {
+    pub event_type: EventType,
+    pub message: String,
+    pub time: Datetime,
+}
+
+impl Event {
+    pub async fn log(db: &DB, event_type: EventType, message: String) -> Result<Event> {
+        let event: Option<Event> = db
+            .create("event")
+            .content(Event {
+                event_type,
+                message,
+                time: Datetime::from(Utc::now()),
+            })
+            .await
+            .context("Failed to create event")?;
+
+        event.ok_or(anyhow!("Failed to create event"))
     }
 }
