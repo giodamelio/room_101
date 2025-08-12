@@ -144,7 +144,8 @@ pub async fn iroh_subsystem(
     }
 
     // Get our identity from the db if it exists, otherwise generate one
-    let identity: Option<db::Identity> = db::db().await
+    let identity: Option<db::Identity> = db::db()
+        .await
         .select(("config", "identity"))
         .await
         .context("Failed to load identity from database")?;
@@ -161,7 +162,8 @@ pub async fn iroh_subsystem(
             let new_identity = db::Identity::new();
 
             // Write the new identity
-            let _: Option<db::Identity> = db::db().await
+            let _: Option<db::Identity> = db::db()
+                .await
                 .create(("config", "identity"))
                 .content(new_identity.clone())
                 .await
@@ -256,11 +258,7 @@ pub async fn iroh_subsystem(
     subsys.start(SubsystemBuilder::new(
         "peer-message-hearbeat",
         move |subsys| {
-            peer_message_heartbeat(
-                subsys,
-                heartbeat_identity,
-                heartbeat_peer_message_sender,
-            )
+            peer_message_heartbeat(subsys, heartbeat_identity, heartbeat_peer_message_sender)
         },
     ));
 
@@ -362,8 +360,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Introduction");
 
                     // Update last_seen time on heartbeat
-                    if let Err(e) = db::Peer::upsert_peer(node_id, Some(time), hostname).await
-                    {
+                    if let Err(e) = db::Peer::upsert_peer(node_id, Some(time), hostname).await {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }

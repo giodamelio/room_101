@@ -48,7 +48,6 @@ fn setup_tracing() -> Result<()> {
     Ok(())
 }
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
@@ -82,7 +81,9 @@ async fn main() -> Result<()> {
     let result = Toplevel::new(move |s| async move {
         // Only start web server if requested
         if start_web {
-            s.start(SubsystemBuilder::new("webserver", |subsys| webserver_subsystem(subsys)));
+            s.start(SubsystemBuilder::new("webserver", |subsys| {
+                webserver_subsystem(subsys)
+            }));
         }
 
         s.start(SubsystemBuilder::new("iroh", {
