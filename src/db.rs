@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use iroh::{NodeId, PublicKey, SecretKey};
+use iroh::{NodeId, SecretKey};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::any::{self, Any};
@@ -66,10 +66,6 @@ impl Identity {
         identity
     }
 
-    pub fn public(&self) -> PublicKey {
-        self.secret_key.public()
-    }
-
     pub fn id(&self) -> NodeId {
         self.secret_key.public()
     }
@@ -83,6 +79,7 @@ pub struct Peer {
     )]
     pub node_id: NodeId,
     pub last_seen: Option<Datetime>,
+    pub hostname: Option<String>,
 }
 
 fn serialize_node_id<S>(node_id: &NodeId, serializer: S) -> Result<S::Ok, S::Error>
@@ -111,6 +108,7 @@ impl Peer {
         let peer = Peer {
             node_id,
             last_seen: None,
+            hostname: None,
         };
 
         db.create("peer")
@@ -119,14 +117,33 @@ impl Peer {
             .map_err(|e| anyhow!("Failed to create peer: {}", e))
     }
 
-    pub async fn add_peer(db: &DB, node_id: NodeId, last_seen: Option<Datetime>) -> Result<()> {
-        let peer = Peer { node_id, last_seen };
+    pub async fn upsert_peer(
+        db: &DB,
+        node_id: NodeId,
+        last_seen: Option<Datetime>,
+        hostname: Option<String>,
+    ) -> Result<()> {
+        let mut upsert_data = serde_json::Map::new();
+
+        // Always add node id
+        upsert_data.insert(
+            "node_id".to_string(),
+            serde_json::to_value(node_id.to_string())?,
+        );
+
+        if let Some(ref last_seen) = last_seen {
+            upsert_data.insert("last_seen".to_string(), serde_json::to_value(last_seen)?);
+        }
+
+        if let Some(ref hostname) = hostname {
+            upsert_data.insert("hostname".to_string(), serde_json::to_value(hostname)?);
+        }
 
         let _: Option<Peer> = db
             .upsert(("peer", node_id.to_string()))
-            .content(peer)
+            .merge(upsert_data)
             .await
-            .with_context(|| format!("Failed to upsert peer {node_id}"))?;
+            .with_context(|| format!("Failed to merge peer {node_id}"))?;
 
         Ok(())
     }
@@ -139,7 +156,7 @@ impl Peer {
         // Use individual upserts with proper record IDs
         let peer_count = node_ids.len();
         for node_id in node_ids {
-            Peer::add_peer(db, node_id, None).await?;
+            Peer::upsert_peer(db, node_id, None, None).await?;
         }
 
         debug!("Successfully upserted {} peers", peer_count);

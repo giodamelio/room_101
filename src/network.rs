@@ -62,13 +62,34 @@ impl MessageSigner for PeerMessage {}
 
 #[derive(Debug, Serialize, Deserialize)]
 enum PeerMessage {
-    Joined { node_id: NodeId, time: Datetime },
-    Leaving { node_id: NodeId, time: Datetime },
-    Introduction { node_id: NodeId, time: Datetime },
-    Heartbeat { node_id: NodeId, time: Datetime },
+    Joined {
+        node_id: NodeId,
+        time: Datetime,
+        hostname: Option<String>,
+    },
+    Leaving {
+        node_id: NodeId,
+        time: Datetime,
+    },
+    Introduction {
+        node_id: NodeId,
+        time: Datetime,
+        hostname: Option<String>,
+    },
+    Heartbeat {
+        node_id: NodeId,
+        time: Datetime,
+    },
 }
 
 const PEER_TOPIC: TopicId = topic_id!("PEER_TOPIC");
+
+/// Get the systems hostname, returns None if unable
+fn get_hostname() -> Option<String> {
+    hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .ok()
+}
 
 pub async fn iroh_subsystem(
     subsys: SubsystemHandle,
@@ -211,6 +232,7 @@ pub async fn iroh_subsystem(
         .send(PeerMessage::Joined {
             node_id: identity.id(),
             time: Datetime::from(Utc::now()),
+            hostname: get_hostname(),
         })
         .await?;
 
@@ -251,11 +273,17 @@ async fn peer_message_handler(
                 SignedMessage::verify_and_decode(&message.content)?;
 
             match message {
-                PeerMessage::Joined { node_id, time } => {
+                PeerMessage::Joined {
+                    node_id,
+                    time,
+                    hostname,
+                } => {
                     trace!(%node_id, %time, "Handling PeerMessage::Joined");
 
                     // Add the peer to the database
-                    if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
+                    if let Err(e) =
+                        db::Peer::upsert_peer(&db, node_id, Some(time), hostname.clone()).await
+                    {
                         debug!("Failed to add peer {node_id} to database: {e}");
                     }
 
@@ -264,6 +292,7 @@ async fn peer_message_handler(
                         .send(PeerMessage::Introduction {
                             node_id: identity.id(),
                             time: Datetime::from(Utc::now()),
+                            hostname,
                         })
                         .await?;
                 }
@@ -271,7 +300,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Leaving");
 
                     // Update last_seen time when they leave
-                    if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
+                    if let Err(e) = db::Peer::upsert_peer(&db, node_id, Some(time), None).await {
                         debug!("Failed to update peer {node_id} last_seen time: {e}");
                     }
                 }
@@ -279,15 +308,20 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Heartbeat");
 
                     // Update last_seen time on heartbeat
-                    if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
+                    if let Err(e) = db::Peer::upsert_peer(&db, node_id, Some(time), None).await {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }
-                PeerMessage::Introduction { node_id, time } => {
+                PeerMessage::Introduction {
+                    node_id,
+                    time,
+                    hostname,
+                } => {
                     trace!(%node_id, %time, "Handling PeerMessage::Introduction");
 
                     // Update last_seen time on heartbeat
-                    if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
+                    if let Err(e) = db::Peer::upsert_peer(&db, node_id, Some(time), hostname).await
+                    {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }

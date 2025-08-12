@@ -53,6 +53,11 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                             "Never seen"
                         }
                     }
+                    @if let Some(hostname) = &peer.hostname {
+                        div style="font-size: 0.8em; color: #666;" {
+                            "Hostname " (hostname)
+                        }
+                    }
                 }
             }
         }
