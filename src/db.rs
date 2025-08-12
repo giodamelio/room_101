@@ -110,4 +110,32 @@ impl Peer {
             .await
             .map_err(|e| anyhow!("Failed to create peer: {}", e))
     }
+
+    pub async fn add_peer(db: &DB, node_id: NodeId, last_seen: Option<Datetime>) -> Result<()> {
+        let peer = Peer { node_id, last_seen };
+
+        let _: Option<Peer> = db
+            .upsert(("peer", node_id.to_string()))
+            .content(peer)
+            .await
+            .with_context(|| format!("Failed to upsert peer {node_id}"))?;
+
+        Ok(())
+    }
+
+    pub async fn add_peers(db: &DB, node_ids: Vec<NodeId>) -> Result<()> {
+        if node_ids.is_empty() {
+            return Ok(());
+        }
+
+        // Use individual upserts with proper record IDs
+        let peer_count = node_ids.len();
+        for node_id in node_ids {
+            Peer::add_peer(db, node_id, None).await?;
+        }
+
+        debug!("Successfully upserted {} peers", peer_count);
+
+        Ok(())
+    }
 }

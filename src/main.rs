@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
-use std::{env, time::Duration};
+use clap::Parser;
+use iroh::NodeId;
+use std::{env, error::Error, time::Duration};
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -13,7 +15,20 @@ mod error;
 mod heartbeat;
 mod middleware;
 mod network;
+mod utils;
 mod webserver;
+
+#[derive(Parser, Debug)]
+#[command(name = "room_101")]
+#[command(about = "A peer-to-peer networking application")]
+struct Args {
+    /// Bootstrap node IDs to connect to (hex strings)
+    bootstrap: Vec<String>,
+
+    /// Start the web server
+    #[arg(long)]
+    start_web: bool,
+}
 
 /// Initialize simple tracing-based logging to stdout
 fn setup_tracing() -> Result<()> {
@@ -41,6 +56,9 @@ fn get_database_url() -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse command line arguments
+    let args = Args::parse();
+
     // Initialize tracing first
     setup_tracing()?;
 
@@ -59,25 +77,74 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to initialize database schema")?;
 
+    // Parse bootstrap node strings into NodeIDs
+    let bootstrap_nodes = if args.bootstrap.is_empty() {
+        None
+    } else {
+        let mut nodes = Vec::new();
+        for node_str in args.bootstrap {
+            let node_id: NodeId = node_str
+                .parse()
+                .with_context(|| format!("Invalid node ID format: {}", node_str))?;
+            nodes.push(node_id);
+        }
+        Some(nodes)
+    };
+
+    // Capture flag value before closure
+    let start_web = args.start_web;
+
     // Create the top level
-    Toplevel::new(|s| async move {
+    let result = Toplevel::new(move |s| async move {
         s.start(SubsystemBuilder::new("heartbeat", {
             let db = db.clone();
             move |subsys| heartbeat_subsystem(subsys, db, Duration::from_secs(2))
         }));
 
-        s.start(SubsystemBuilder::new("webserver", {
-            let db = db.clone();
-            move |subsys| webserver_subsystem(subsys, db)
-        }));
+        // Only start web server if requested
+        if start_web {
+            s.start(SubsystemBuilder::new("webserver", {
+                let db = db.clone();
+                move |subsys| webserver_subsystem(subsys, db)
+            }));
+        }
 
         s.start(SubsystemBuilder::new("iroh", {
             let db = db.clone();
-            move |subsys| iroh_subsystem(subsys, db)
+            let bootstrap = bootstrap_nodes.clone();
+            move |subsys| iroh_subsystem(subsys, db, bootstrap)
         }));
     })
     .catch_signals()
     .handle_shutdown_requests(Duration::from_secs(30))
-    .await
-    .map_err(Into::into)
+    .await;
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Extract more specific error information about subsystem failures
+            let errors = e.get_subsystem_errors();
+            if !errors.is_empty() {
+                let error_details: Vec<String> = errors
+                    .iter()
+                    .map(|subsys_error| {
+                        let error_msg = match subsys_error.source() {
+                            Some(source) => source.to_string(),
+                            None => "Unknown error".to_string(),
+                        };
+                        format!("{}: {}", subsys_error.name(), error_msg)
+                    })
+                    .collect();
+
+                anyhow::bail!(
+                    "Subsystem errors occurred:\n  {}",
+                    error_details.join("\n  ")
+                );
+            } else {
+                anyhow::bail!("Application shutdown with error: {}", e);
+            }
+        }
+    }
 }
+// test comment
+// another test

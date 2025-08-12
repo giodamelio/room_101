@@ -1,13 +1,85 @@
+use std::marker::PhantomData;
+
 use anyhow::{Context, Result};
-use iroh::{Endpoint, Watcher, protocol::Router};
-use iroh_gossip::{ALPN, net::Gossip};
-use tokio_graceful_shutdown::SubsystemHandle;
+use chrono::Utc;
+use ed25519_dalek::Signature;
+use iroh::{Endpoint, NodeId, Watcher, protocol::Router};
+use iroh::{PublicKey, SecretKey};
+use iroh_gossip::api::{Event, GossipReceiver};
+use iroh_gossip::{ALPN, net::Gossip, proto::TopicId};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use surrealdb::Datetime;
+use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
+use tokio_stream::StreamExt;
 use tracing::{debug, info};
 
 use crate::db;
+use crate::utils::topic_id;
 
-pub async fn iroh_subsystem(subsys: SubsystemHandle, db: db::DB) -> Result<()> {
+#[derive(Debug, Serialize, Deserialize)]
+struct SignedMessage<M: Serialize + DeserializeOwned> {
+    phantom: PhantomData<M>,
+    from: PublicKey,
+    data: Vec<u8>,
+    signature: Signature,
+}
+
+impl<M: Serialize + DeserializeOwned> SignedMessage<M> {
+    pub fn verify_and_decode(bytes: &[u8]) -> Result<(PublicKey, M)> {
+        let signed_message: Self = serde_json::from_slice(bytes)?;
+        signed_message
+            .from
+            .verify(&signed_message.data, &signed_message.signature)?;
+        let message: M = serde_json::from_slice(&signed_message.data)?;
+        Ok((signed_message.from, message))
+    }
+
+    pub fn sign_and_encode(secret_key: &SecretKey, message: &M) -> Result<Vec<u8>> {
+        let data = serde_json::to_vec(&message)?;
+        let signature = secret_key.sign(&data);
+        let from: PublicKey = secret_key.public();
+        let signed_message = Self {
+            phantom: PhantomData,
+            from,
+            data,
+            signature,
+        };
+        let encoded = serde_json::to_vec(&signed_message)?;
+        Ok(encoded)
+    }
+}
+
+trait MessageSigner: Serialize + DeserializeOwned {
+    fn sign(&self, secret_key: &SecretKey) -> Result<Vec<u8>> {
+        SignedMessage::<Self>::sign_and_encode(secret_key, self)
+    }
+}
+
+impl MessageSigner for PeerMessage {}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum PeerMessage {
+    Joined { node_id: NodeId, time: Datetime },
+    Leaving { node_id: NodeId, time: Datetime },
+    Heartbeat { node_id: NodeId, time: Datetime },
+}
+
+const PEER_TOPIC: TopicId = topic_id!("PEER_TOPIC");
+
+pub async fn iroh_subsystem(
+    subsys: SubsystemHandle,
+    db: db::DB,
+    bootstrap_nodes: Option<Vec<NodeId>>,
+) -> Result<()> {
     info!("Iroh subsystem started");
+
+    // Add bootstrap nodes to database if provided
+    if let Some(nodes) = bootstrap_nodes {
+        info!("Adding {} bootstrap nodes to database", nodes.len());
+        db::Peer::add_peers(&db, nodes)
+            .await
+            .context("Failed to add bootstrap nodes to database")?;
+    }
 
     // Get our identity from the db if it exists, otherwise generate one
     let identity: Option<db::Identity> = db
@@ -42,13 +114,13 @@ pub async fn iroh_subsystem(subsys: SubsystemHandle, db: db::DB) -> Result<()> {
         }
     };
 
-    // List our current peers
-    dbg!(db::Peer::list(&db).await?);
+    // Save our node id
+    let my_node_id: NodeId = identity.clone().secret_key.public();
 
     // Create endpoint for this node
     debug!("Creating iroh endpoint with identity");
     let endpoint = Endpoint::builder()
-        .secret_key(identity.secret_key)
+        .secret_key(identity.clone().secret_key)
         .discovery_n0()
         .bind()
         .await
@@ -73,16 +145,107 @@ pub async fn iroh_subsystem(subsys: SubsystemHandle, db: db::DB) -> Result<()> {
         .accept(ALPN, gossip.clone())
         .spawn();
 
-    info!("Accepting connections...");
-    info!(
-        "To connect another node: cargo run -- {}",
-        node_addr.node_id
-    );
+    // Get known peers for gossip (let Iroh discover addressing via relay/DHT)
+    let peers: Vec<NodeId> = db::Peer::list(&db)
+        .await?
+        .iter()
+        .map(|p| p.node_id)
+        .filter(|&peer_id| peer_id != my_node_id) // Don't include ourself
+        .collect();
+
+    debug!("Known peers for gossip discovery: {:?}", peers);
+
+    info!("Accepting connections, Our Node ID: {}", node_addr.node_id);
+
+    // Subscribe to the peers topic
+    let (peer_sender, peer_reciever) = gossip.subscribe_and_join(PEER_TOPIC, peers).await?.split();
+
+    // Listen to incoming PeerMessages
+    subsys.start(SubsystemBuilder::new(
+        "peer-message-listener",
+        move |subsys| peer_message_handler(subsys, peer_reciever, db.clone()),
+    ));
+
+    // Send our welcome message
+    peer_sender
+        .broadcast(
+            (PeerMessage::Joined {
+                node_id: my_node_id,
+                time: Datetime::from(Utc::now()),
+            })
+            .sign(&identity.secret_key)?
+            .into(),
+        )
+        .await?;
 
     // Wait for shutdown signal
     subsys.on_shutdown_requested().await;
+
+    // Send our leaving event
+    info!("Sending leaving message...");
+    peer_sender
+        .broadcast(
+            (PeerMessage::Leaving {
+                node_id: my_node_id,
+                time: Datetime::from(Utc::now()),
+            })
+            .sign(&identity.secret_key)?
+            .into(),
+        )
+        .await?;
+    info!("Leaving message queued");
+
+    // Wait for message propagation - this is unfortunately necessary
+    // because gossip protocols need time to deliver messages to peers over the network
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Shutdown the gossip
+    gossip.shutdown().await?;
+
     info!("Iroh received shutdown signal");
 
     info!("Iroh subsystem stopped");
+    Ok(())
+}
+
+async fn peer_message_handler(
+    _subsys: SubsystemHandle,
+    mut peer_reciever: GossipReceiver,
+    db: db::DB,
+) -> anyhow::Result<()> {
+    while let Some(event) = peer_reciever.try_next().await? {
+        if let Event::Received(message) = event {
+            let (_from, message): (NodeId, PeerMessage) =
+                SignedMessage::verify_and_decode(&message.content)?;
+
+            match message {
+                PeerMessage::Joined { node_id, time } => {
+                    info!("Peer {node_id} joined at {time}");
+
+                    // Add the peer to the database
+                    if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
+                        debug!("Failed to add peer {node_id} to database: {e}");
+                    }
+                }
+                PeerMessage::Leaving { node_id, time } => {
+                    info!("Peer {node_id} left at {time}");
+
+                    // Update last_seen time when they leave
+                    if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
+                        debug!("Failed to update peer {node_id} last_seen time: {e}");
+                    }
+                }
+                PeerMessage::Heartbeat { node_id, time } => {
+                    info!("Peer {node_id} sent heartbeat at {time}");
+
+                    // Update last_seen time on heartbeat
+                    if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
+                        debug!("Failed to update peer {node_id} heartbeat time: {e}");
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }

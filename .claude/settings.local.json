@@ -9,7 +9,11 @@
       "Bash(grep:*)",
       "Bash(mv:*)",
       "Bash(DATABASE_URL=ws://dbaccess:reallybadpassword1@localhost:8000 cargo run)",
-      "WebFetch(domain:docs.rs)"
+      "WebFetch(domain:docs.rs)",
+      "Bash(find:*)",
+      "Bash(time cargo build)",
+      "mcp__language-server__hover",
+      "mcp__language-server__definition"
     ]
   },
   "enableAllProjectMcpServers": true,
