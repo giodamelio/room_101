@@ -113,6 +113,7 @@ fn tmpl_event_list(events: &Vec<Event>) -> Markup {
                     th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Event Type" }
                     th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Details" }
                     th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Message" }
+                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "JSON Data" }
                 }
             }
             tbody {
@@ -141,6 +142,11 @@ fn tmpl_event_list(events: &Vec<Event>) -> Markup {
                         }
                         td style="border: 1px solid #ddd; padding: 8px;" { 
                             (event.message)
+                        }
+                        td style="border: 1px solid #ddd; padding: 8px; font-family: monospace; font-size: 0.8em;" { 
+                            pre style="margin: 0; white-space: pre-wrap; word-break: break-all;" {
+                                (serde_json::to_string_pretty(&event.data).unwrap_or_else(|_| "Invalid JSON".to_string()))
+                            }
                         }
                     }
                 }

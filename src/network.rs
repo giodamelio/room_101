@@ -62,25 +62,24 @@ trait MessageSigner: Serialize + DeserializeOwned {
 impl MessageSigner for PeerMessage {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum PeerMessage {
+    #[serde(rename = "JOINED")]
     Joined {
         node_id: NodeId,
         time: Datetime,
         hostname: Option<String>,
     },
-    Leaving {
-        node_id: NodeId,
-        time: Datetime,
-    },
+    #[serde(rename = "LEAVING")]
+    Leaving { node_id: NodeId, time: Datetime },
+    #[serde(rename = "INTRODUCTION")]
     Introduction {
         node_id: NodeId,
         time: Datetime,
         hostname: Option<String>,
     },
-    Heartbeat {
-        node_id: NodeId,
-        time: Datetime,
-    },
+    #[serde(rename = "HEARTBEAT")]
+    Heartbeat { node_id: NodeId, time: Datetime },
 }
 
 impl Display for PeerMessage {
@@ -116,12 +115,16 @@ async fn send_peer_message(
         return Ok(());
     }
 
+    // Convert PeerMessage to JSON (uses our custom Serialize implementation)
+    let data = serde_json::to_value(&message)?;
+
     Event::log(
         db,
         EventType::PeerMessage {
             message_type: message.to_string(),
         },
         "Send peer message".into(),
+        Some(data),
     )
     .await?;
 

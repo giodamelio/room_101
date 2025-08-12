@@ -8,7 +8,6 @@ use surrealdb::{Datetime, Surreal};
 use tracing::{debug, info, instrument};
 use url::Url;
 
-
 pub type DB = Surreal<Any>;
 
 #[cfg(test)]
@@ -177,16 +176,23 @@ pub struct Event {
     pub event_type: EventType,
     pub message: String,
     pub time: Datetime,
+    pub data: serde_json::Value,
 }
 
 impl Event {
-    pub async fn log(db: &DB, event_type: EventType, message: String) -> Result<Event> {
+    pub async fn log(
+        db: &DB,
+        event_type: EventType,
+        message: String,
+        data: Option<serde_json::Value>,
+    ) -> Result<Event> {
         let event: Option<Event> = db
             .create("event")
             .content(Event {
                 event_type,
                 message,
                 time: Datetime::from(Utc::now()),
+                data: data.unwrap_or_else(|| serde_json::json!({})),
             })
             .await
             .context("Failed to create event")?;
