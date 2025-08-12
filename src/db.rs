@@ -8,7 +8,6 @@ use surrealdb::{Datetime, Surreal};
 use tracing::{debug, info, instrument};
 use url::Url;
 
-use crate::network::PeerMessage;
 
 pub type DB = Surreal<Any>;
 
@@ -193,5 +192,16 @@ impl Event {
             .context("Failed to create event")?;
 
         event.ok_or(anyhow!("Failed to create event"))
+    }
+
+    pub async fn list(db: &DB) -> Result<Vec<Event>> {
+        let events: Vec<Event> = db
+            .query("SELECT * FROM event ORDER BY time DESC LIMIT 100")
+            .await
+            .context("Failed to query events")?
+            .take(0)
+            .context("Failed to parse events query result")?;
+
+        Ok(events)
     }
 }

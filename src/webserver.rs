@@ -13,7 +13,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::info;
 
 use crate::{
-    db::{DB, Peer},
+    db::{DB, Peer, Event},
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
 };
@@ -64,8 +64,34 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
     }
 }
 
+fn tmpl_index() -> Markup {
+    layout(html! {
+        h1 { "Room 101" }
+        p { "A peer-to-peer networking application" }
+        
+        nav {
+            ul style="list-style: none; padding: 0;" {
+                li style="margin: 10px 0;" {
+                    a href="/peers" style="display: block; padding: 10px; background: #f0f0f0; text-decoration: none; border-radius: 5px;" {
+                        "📡 Peers"
+                    }
+                }
+                li style="margin: 10px 0;" {
+                    a href="/events" style="display: block; padding: 10px; background: #f0f0f0; text-decoration: none; border-radius: 5px;" {
+                        "📋 Events"
+                    }
+                }
+            }
+        }
+    })
+}
+
 fn tmpl_list_peers(peers: Vec<Peer>) -> Markup {
     layout(html! {
+        nav style="margin-bottom: 20px;" {
+            a href="/" { "← Home" }
+        }
+        
         h1 { "Peers" }
         (tmpl_peer_list(&peers))
 
@@ -78,10 +104,83 @@ fn tmpl_list_peers(peers: Vec<Peer>) -> Markup {
     })
 }
 
+fn tmpl_event_list(events: &Vec<Event>) -> Markup {
+    html! {
+        table style="width: 100%; border-collapse: collapse;" {
+            thead {
+                tr {
+                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Time" }
+                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Event Type" }
+                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Details" }
+                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Message" }
+                }
+            }
+            tbody {
+                @for event in events {
+                    tr {
+                        td style="border: 1px solid #ddd; padding: 8px;" { 
+                            (format_relative_time(&event.time))
+                        }
+                        td style="border: 1px solid #ddd; padding: 8px;" { 
+                            @match &event.event_type {
+                                crate::db::EventType::PeerMessage { .. } => {
+                                    span style="background: #e3f2fd; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
+                                        "PeerMessage"
+                                    }
+                                }
+                            }
+                        }
+                        td style="border: 1px solid #ddd; padding: 8px;" { 
+                            @match &event.event_type {
+                                crate::db::EventType::PeerMessage { message_type } => {
+                                    span style="background: #f3e5f5; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
+                                        (message_type)
+                                    }
+                                }
+                            }
+                        }
+                        td style="border: 1px solid #ddd; padding: 8px;" { 
+                            (event.message)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn tmpl_list_events(events: Vec<Event>) -> Markup {
+    layout(html! {
+        nav style="margin-bottom: 20px;" {
+            a href="/" { "← Home" }
+        }
+        
+        h1 { "Events" }
+        p { "Last 100 events" }
+        
+        @if events.is_empty() {
+            p style="color: #666;" { "No events yet" }
+        } @else {
+            (tmpl_event_list(&events))
+        }
+    })
+}
+
+#[handler]
+async fn index() -> Result<Markup> {
+    Ok(tmpl_index())
+}
+
 #[handler]
 async fn list_peers(Data(db): Data<&DB>) -> Result<Markup> {
     let peers = Peer::list(db).await?;
     Ok(tmpl_list_peers(peers))
+}
+
+#[handler]
+async fn list_events(Data(db): Data<&DB>) -> Result<Markup> {
+    let events = Event::list(db).await?;
+    Ok(tmpl_list_events(events))
 }
 
 #[derive(Deserialize, Debug)]
@@ -108,7 +207,9 @@ async fn create_peer(Data(db): Data<&DB>, form: poem::Result<Form<CreatePeer>>) 
 
 pub fn create_app(db: DB) -> impl Endpoint {
     Route::new()
+        .at("/", get(index))
         .at("/peers", get(list_peers).post(create_peer))
+        .at("/events", get(list_events))
         .with(HtmxErrorMiddleware)
         .data(db)
 }
