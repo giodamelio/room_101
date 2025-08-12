@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+use chrono_humanize::HumanTime;
 use iroh::NodeId;
 use maud::{DOCTYPE, Markup, html};
 use poem::{
@@ -6,6 +8,7 @@ use poem::{
     web::{Data, Form},
 };
 use serde::Deserialize;
+use surrealdb::Datetime;
 use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::info;
 
@@ -14,6 +17,15 @@ use crate::{
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
 };
+
+fn format_relative_time(datetime: &Datetime) -> String {
+    // Use serde to serialize to a clean format
+    let serialized = serde_json::to_string(datetime).unwrap();
+    // Remove quotes from the JSON string
+    let cleaned = serialized.trim_matches('"');
+    let dt = cleaned.parse::<DateTime<Utc>>().unwrap();
+    HumanTime::from(dt).to_string()
+}
 
 fn layout(content: Markup) -> Markup {
     html! {
@@ -30,7 +42,18 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
     html! {
         ul id="peer-list" {
             @for peer in peers {
-                li { "Peer " (peer.node_id) }
+                li {
+                    div { "Peer: " (peer.node_id) }
+                    @if let Some(last_seen) = &peer.last_seen {
+                        div style="font-size: 0.8em; color: #666;" {
+                            "Last seen " (format_relative_time(last_seen))
+                        }
+                    } @else {
+                        div style="font-size: 0.8em; color: #999;" {
+                            "Never seen"
+                        }
+                    }
+                }
             }
         }
     }

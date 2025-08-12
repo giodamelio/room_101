@@ -25,3 +25,4 @@ serde_json = "1.0.142"
 chrono = "0.4.41"
 tokio-stream = "0.1.17"
 clap = { version = "4.5.44", features = ["derive"] }
+chrono-humanize = "0.2.3"
