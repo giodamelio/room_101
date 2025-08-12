@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -117,9 +118,6 @@ pub async fn iroh_subsystem(
         }
     };
 
-    // Save our node id
-    let my_node_id: NodeId = identity.clone().secret_key.public();
-
     // Create endpoint for this node
     debug!("Creating iroh endpoint with identity");
     let endpoint = Endpoint::builder()
@@ -153,7 +151,7 @@ pub async fn iroh_subsystem(
         .await?
         .iter()
         .map(|p| p.node_id)
-        .filter(|&peer_id| peer_id != my_node_id) // Don't include ourself
+        .filter(|&peer_id| peer_id != identity.id()) // Don't include ourself
         .collect();
 
     debug!("Known peers for gossip discovery: {:?}", peers);
@@ -184,6 +182,7 @@ pub async fn iroh_subsystem(
     // Send outgoing messages
     let sender_db = db.clone();
     let sender_peer_message_sender = peer_sender.clone();
+    let sender_identity = identity.clone();
     subsys.start(SubsystemBuilder::new(
         "peer-message-sender",
         move |subsys| {
@@ -191,16 +190,26 @@ pub async fn iroh_subsystem(
                 subsys,
                 sender_peer_message_sender,
                 peer_message_rx,
-                identity,
+                sender_identity,
                 sender_db,
             )
+        },
+    ));
+
+    // Send heartbeat
+    let heartbeat_peer_message_sender = peer_message_tx.clone();
+    let heartbeat_identity = identity.clone();
+    subsys.start(SubsystemBuilder::new(
+        "peer-message-hearbeat",
+        move |subsys| {
+            peer_message_heartbeat(subsys, heartbeat_identity, heartbeat_peer_message_sender)
         },
     ));
 
     // Send our welcome message
     peer_message_tx
         .send(PeerMessage::Joined {
-            node_id: my_node_id,
+            node_id: identity.id(),
             time: Datetime::from(Utc::now()),
         })
         .await?;
@@ -212,7 +221,7 @@ pub async fn iroh_subsystem(
     info!("Sending leaving message...");
     peer_message_tx
         .send(PeerMessage::Leaving {
-            node_id: my_node_id,
+            node_id: identity.id(),
             time: Datetime::from(Utc::now()),
         })
         .await?;
@@ -302,16 +311,40 @@ async fn peer_message_sender(
                 peer_sender
                     .broadcast(
                         message
-                        .sign(&identity.secret_key)?
-                        .into(),
+                            .sign(&identity.secret_key)?
+                            .into(),
                     )
-                    .await?;
+                .await?;
             }
-
             _ = subsys.on_shutdown_requested() => {
+                break
+            }
+        }
+    }
 
-                    break
-                }
+    Ok(())
+}
+
+async fn peer_message_heartbeat(
+    subsys: SubsystemHandle,
+    identity: Identity,
+    peer_message_tx: mpsc::Sender<PeerMessage>,
+) -> anyhow::Result<()> {
+    let mut ticker = tokio::time::interval(Duration::from_secs(10));
+
+    loop {
+        select! {
+            _ = ticker.tick() => {
+                peer_message_tx
+                    .send(PeerMessage::Heartbeat {
+                        node_id: identity.id(),
+                        time: Datetime::from(Utc::now()),
+                    })
+                .await?;
+            }
+            _ = subsys.on_shutdown_requested() => {
+                break
+            }
         }
     }
 

@@ -6,13 +6,11 @@ use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use heartbeat::heartbeat_subsystem;
 use network::iroh_subsystem;
 use webserver::webserver_subsystem;
 
 mod db;
 mod error;
-mod heartbeat;
 mod middleware;
 mod network;
 mod utils;
@@ -85,7 +83,7 @@ async fn main() -> Result<()> {
         for node_str in args.bootstrap {
             let node_id: NodeId = node_str
                 .parse()
-                .with_context(|| format!("Invalid node ID format: {}", node_str))?;
+                .with_context(|| format!("Invalid node ID format: {node_str}"))?;
             nodes.push(node_id);
         }
         Some(nodes)
@@ -96,11 +94,6 @@ async fn main() -> Result<()> {
 
     // Create the top level
     let result = Toplevel::new(move |s| async move {
-        s.start(SubsystemBuilder::new("heartbeat", {
-            let db = db.clone();
-            move |subsys| heartbeat_subsystem(subsys, db, Duration::from_secs(2))
-        }));
-
         // Only start web server if requested
         if start_web {
             s.start(SubsystemBuilder::new("webserver", {
@@ -146,5 +139,3 @@ async fn main() -> Result<()> {
         }
     }
 }
-// test comment
-// another test
