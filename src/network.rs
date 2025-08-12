@@ -103,7 +103,6 @@ fn get_hostname() -> Option<String> {
 }
 
 async fn send_peer_message(
-    db: &db::DB,
     peer_message_tx: mpsc::Sender<PeerMessage>,
     message: PeerMessage,
 ) -> Result<()> {
@@ -119,7 +118,6 @@ async fn send_peer_message(
     let data = serde_json::to_value(&message)?;
 
     Event::log(
-        db,
         EventType::PeerMessage {
             message_type: message.to_string(),
         },
@@ -133,7 +131,6 @@ async fn send_peer_message(
 
 pub async fn iroh_subsystem(
     subsys: SubsystemHandle,
-    db: db::DB,
     bootstrap_nodes: Option<Vec<NodeId>>,
 ) -> Result<()> {
     info!("Iroh subsystem started");
@@ -141,13 +138,13 @@ pub async fn iroh_subsystem(
     // Add bootstrap nodes to database if provided
     if let Some(nodes) = bootstrap_nodes {
         info!("Adding {} bootstrap nodes to database", nodes.len());
-        db::Peer::add_peers(&db, nodes)
+        db::Peer::add_peers(nodes)
             .await
             .context("Failed to add bootstrap nodes to database")?;
     }
 
     // Get our identity from the db if it exists, otherwise generate one
-    let identity: Option<db::Identity> = db
+    let identity: Option<db::Identity> = db::db().await
         .select(("config", "identity"))
         .await
         .context("Failed to load identity from database")?;
@@ -164,7 +161,7 @@ pub async fn iroh_subsystem(
             let new_identity = db::Identity::new();
 
             // Write the new identity
-            let _: Option<db::Identity> = db
+            let _: Option<db::Identity> = db::db().await
                 .create(("config", "identity"))
                 .content(new_identity.clone())
                 .await
@@ -208,7 +205,7 @@ pub async fn iroh_subsystem(
         .spawn();
 
     // Get known peers for gossip (let Iroh discover addressing via relay/DHT)
-    let peers: Vec<NodeId> = db::Peer::list(&db)
+    let peers: Vec<NodeId> = db::Peer::list()
         .await?
         .iter()
         .map(|p| p.node_id)
@@ -224,7 +221,6 @@ pub async fn iroh_subsystem(
     let (peer_message_tx, peer_message_rx) = tokio::sync::mpsc::channel::<PeerMessage>(5);
 
     // Listen to incoming PeerMessages
-    let listener_db = db.clone();
     let listener_peer_message_tx = peer_message_tx.clone();
     let listener_identity = identity.clone();
     subsys.start(SubsystemBuilder::new(
@@ -235,13 +231,11 @@ pub async fn iroh_subsystem(
                 listener_identity,
                 peer_reciever,
                 listener_peer_message_tx,
-                listener_db,
             )
         },
     ));
 
     // Send outgoing messages
-    let sender_db = db.clone();
     let sender_peer_message_sender = peer_sender.clone();
     let sender_identity = identity.clone();
     subsys.start(SubsystemBuilder::new(
@@ -252,13 +246,11 @@ pub async fn iroh_subsystem(
                 sender_peer_message_sender,
                 peer_message_rx,
                 sender_identity,
-                sender_db,
             )
         },
     ));
 
     // Send heartbeat
-    let heartbeat_db = db.clone();
     let heartbeat_peer_message_sender = peer_message_tx.clone();
     let heartbeat_identity = identity.clone();
     subsys.start(SubsystemBuilder::new(
@@ -266,7 +258,6 @@ pub async fn iroh_subsystem(
         move |subsys| {
             peer_message_heartbeat(
                 subsys,
-                heartbeat_db,
                 heartbeat_identity,
                 heartbeat_peer_message_sender,
             )
@@ -275,7 +266,6 @@ pub async fn iroh_subsystem(
 
     // Send our welcome message
     send_peer_message(
-        &db,
         peer_message_tx.clone(),
         PeerMessage::Joined {
             node_id: identity.id(),
@@ -291,7 +281,6 @@ pub async fn iroh_subsystem(
     // Send our leaving event
     info!("Sending leaving message...");
     send_peer_message(
-        &db,
         peer_message_tx.clone(),
         PeerMessage::Leaving {
             node_id: identity.id(),
@@ -317,7 +306,6 @@ async fn peer_message_handler(
     identity: Identity,
     mut peer_reciever: GossipReceiver,
     peer_message_tx: mpsc::Sender<PeerMessage>,
-    db: db::DB,
 ) -> anyhow::Result<()> {
     while let Some(event) = peer_reciever.try_next().await? {
         if let iroh_gossip::api::Event::Received(message) = event {
@@ -334,14 +322,13 @@ async fn peer_message_handler(
 
                     // Add the peer to the database
                     if let Err(e) =
-                        db::Peer::upsert_peer(&db, node_id, Some(time), hostname.clone()).await
+                        db::Peer::upsert_peer(node_id, Some(time), hostname.clone()).await
                     {
                         debug!("Failed to add peer {node_id} to database: {e}");
                     }
 
                     // Send an introduction to the network
                     send_peer_message(
-                        &db,
                         peer_message_tx.clone(),
                         PeerMessage::Introduction {
                             node_id: identity.id(),
@@ -355,7 +342,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Leaving");
 
                     // Update last_seen time when they leave
-                    if let Err(e) = db::Peer::upsert_peer(&db, node_id, Some(time), None).await {
+                    if let Err(e) = db::Peer::upsert_peer(node_id, Some(time), None).await {
                         debug!("Failed to update peer {node_id} last_seen time: {e}");
                     }
                 }
@@ -363,7 +350,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Heartbeat");
 
                     // Update last_seen time on heartbeat
-                    if let Err(e) = db::Peer::upsert_peer(&db, node_id, Some(time), None).await {
+                    if let Err(e) = db::Peer::upsert_peer(node_id, Some(time), None).await {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }
@@ -375,7 +362,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Introduction");
 
                     // Update last_seen time on heartbeat
-                    if let Err(e) = db::Peer::upsert_peer(&db, node_id, Some(time), hostname).await
+                    if let Err(e) = db::Peer::upsert_peer(node_id, Some(time), hostname).await
                     {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
@@ -392,7 +379,6 @@ async fn peer_message_sender(
     peer_sender: GossipSender,
     mut peer_message_rx: mpsc::Receiver<PeerMessage>,
     identity: Identity,
-    _db: db::DB,
 ) -> anyhow::Result<()> {
     loop {
         select! {
@@ -416,7 +402,6 @@ async fn peer_message_sender(
 
 async fn peer_message_heartbeat(
     subsys: SubsystemHandle,
-    db: db::DB,
     identity: Identity,
     peer_message_tx: mpsc::Sender<PeerMessage>,
 ) -> anyhow::Result<()> {
@@ -426,7 +411,6 @@ async fn peer_message_heartbeat(
         select! {
             _ = ticker.tick() => {
                     send_peer_message(
-                        &db,
                         peer_message_tx.clone(),
                     PeerMessage::Heartbeat {
                         node_id: identity.id(),

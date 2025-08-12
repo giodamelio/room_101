@@ -5,10 +5,23 @@ use rand::rngs;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::any::{self, Any};
 use surrealdb::{Datetime, Surreal};
+use tokio::sync::OnceCell;
 use tracing::{debug, info, instrument};
 use url::Url;
 
 pub type DB = Surreal<Any>;
+
+// Global database instance
+static DATABASE: OnceCell<DB> = OnceCell::const_new();
+
+pub async fn db() -> &'static DB {
+    DATABASE.get_or_init(|| async {
+        let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "surrealkv://room_101.db".to_string());
+        let db = connect(&url).await.expect("Failed to connect to database");
+        initialize_database(&db).await.expect("Failed to initialize database");
+        db
+    }).await
+}
 
 #[cfg(test)]
 pub async fn new_test() -> DB {
@@ -99,27 +112,26 @@ where
 }
 
 impl Peer {
-    pub async fn list(db: &DB) -> Result<Vec<Peer>> {
-        db.select("peer")
+    pub async fn list() -> Result<Vec<Peer>> {
+        db().await.select("peer")
             .await
             .context("Failed to select peers from database")
     }
 
-    pub async fn create(db: &DB, node_id: NodeId) -> Result<Option<Peer>> {
+    pub async fn create(node_id: NodeId) -> Result<Option<Peer>> {
         let peer = Peer {
             node_id,
             last_seen: None,
             hostname: None,
         };
 
-        db.create("peer")
+        db().await.create("peer")
             .content(peer)
             .await
             .map_err(|e| anyhow!("Failed to create peer: {}", e))
     }
 
     pub async fn upsert_peer(
-        db: &DB,
         node_id: NodeId,
         last_seen: Option<Datetime>,
         hostname: Option<String>,
@@ -140,7 +152,7 @@ impl Peer {
             upsert_data.insert("hostname".to_string(), serde_json::to_value(hostname)?);
         }
 
-        let _: Option<Peer> = db
+        let _: Option<Peer> = db().await
             .upsert(("peer", node_id.to_string()))
             .merge(upsert_data)
             .await
@@ -149,7 +161,7 @@ impl Peer {
         Ok(())
     }
 
-    pub async fn add_peers(db: &DB, node_ids: Vec<NodeId>) -> Result<()> {
+    pub async fn add_peers(node_ids: Vec<NodeId>) -> Result<()> {
         if node_ids.is_empty() {
             return Ok(());
         }
@@ -157,7 +169,7 @@ impl Peer {
         // Use individual upserts with proper record IDs
         let peer_count = node_ids.len();
         for node_id in node_ids {
-            Peer::upsert_peer(db, node_id, None, None).await?;
+            Peer::upsert_peer(node_id, None, None).await?;
         }
 
         debug!("Successfully upserted {} peers", peer_count);
@@ -181,12 +193,11 @@ pub struct Event {
 
 impl Event {
     pub async fn log(
-        db: &DB,
         event_type: EventType,
         message: String,
         data: Option<serde_json::Value>,
     ) -> Result<Event> {
-        let event: Option<Event> = db
+        let event: Option<Event> = db().await
             .create("event")
             .content(Event {
                 event_type,
@@ -200,8 +211,8 @@ impl Event {
         event.ok_or(anyhow!("Failed to create event"))
     }
 
-    pub async fn list(db: &DB) -> Result<Vec<Event>> {
-        let events: Vec<Event> = db
+    pub async fn list() -> Result<Vec<Event>> {
+        let events: Vec<Event> = db().await
             .query("SELECT * FROM event ORDER BY time DESC LIMIT 100")
             .await
             .context("Failed to query events")?

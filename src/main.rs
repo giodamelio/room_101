@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use iroh::NodeId;
-use std::{env, error::Error, time::Duration};
+use std::{error::Error, time::Duration};
 use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -48,9 +48,6 @@ fn setup_tracing() -> Result<()> {
     Ok(())
 }
 
-fn get_database_url() -> String {
-    env::var("DATABASE_URL").unwrap_or_else(|_| "surrealkv://room_101.db".to_string())
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -62,18 +59,7 @@ async fn main() -> Result<()> {
 
     info!("Starting Room 101");
 
-    // Connect to our database
-    tracing::debug!("Connecting to SurrealDB database");
-    let db_url = get_database_url();
-    let db = db::connect(&db_url)
-        .await
-        .context("Failed to connect to database")?;
-
-    // Initialize database schema
-    tracing::debug!("Initializing database schema");
-    db::initialize_database(&db)
-        .await
-        .context("Failed to initialize database schema")?;
+    // Database will be initialized on first use
 
     // Parse bootstrap node strings into NodeIDs
     let bootstrap_nodes = if args.bootstrap.is_empty() {
@@ -96,16 +82,12 @@ async fn main() -> Result<()> {
     let result = Toplevel::new(move |s| async move {
         // Only start web server if requested
         if start_web {
-            s.start(SubsystemBuilder::new("webserver", {
-                let db = db.clone();
-                move |subsys| webserver_subsystem(subsys, db)
-            }));
+            s.start(SubsystemBuilder::new("webserver", |subsys| webserver_subsystem(subsys)));
         }
 
         s.start(SubsystemBuilder::new("iroh", {
-            let db = db.clone();
             let bootstrap = bootstrap_nodes.clone();
-            move |subsys| iroh_subsystem(subsys, db, bootstrap)
+            move |subsys| iroh_subsystem(subsys, bootstrap)
         }));
     })
     .catch_signals()
