@@ -5,15 +5,17 @@ use chrono::Utc;
 use ed25519_dalek::Signature;
 use iroh::{Endpoint, NodeId, Watcher, protocol::Router};
 use iroh::{PublicKey, SecretKey};
-use iroh_gossip::api::{Event, GossipReceiver};
+use iroh_gossip::api::{Event, GossipReceiver, GossipSender};
 use iroh_gossip::{ALPN, net::Gossip, proto::TopicId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use surrealdb::Datetime;
+use tokio::select;
+use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use tokio_stream::StreamExt;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
-use crate::db;
+use crate::db::{self, Identity};
 use crate::utils::topic_id;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,6 +63,7 @@ impl MessageSigner for PeerMessage {}
 enum PeerMessage {
     Joined { node_id: NodeId, time: Datetime },
     Leaving { node_id: NodeId, time: Datetime },
+    Introduction { node_id: NodeId, time: Datetime },
     Heartbeat { node_id: NodeId, time: Datetime },
 }
 
@@ -159,23 +162,47 @@ pub async fn iroh_subsystem(
 
     // Subscribe to the peers topic
     let (peer_sender, peer_reciever) = gossip.subscribe_and_join(PEER_TOPIC, peers).await?.split();
+    let (peer_message_tx, peer_message_rx) = tokio::sync::mpsc::channel::<PeerMessage>(5);
 
     // Listen to incoming PeerMessages
+    let listener_db = db.clone();
+    let listener_peer_message_tx = peer_message_tx.clone();
+    let listener_identity = identity.clone();
     subsys.start(SubsystemBuilder::new(
         "peer-message-listener",
-        move |subsys| peer_message_handler(subsys, peer_reciever, db.clone()),
+        move |subsys| {
+            peer_message_handler(
+                subsys,
+                listener_identity,
+                peer_reciever,
+                listener_peer_message_tx,
+                listener_db,
+            )
+        },
+    ));
+
+    // Send outgoing messages
+    let sender_db = db.clone();
+    let sender_peer_message_sender = peer_sender.clone();
+    subsys.start(SubsystemBuilder::new(
+        "peer-message-sender",
+        move |subsys| {
+            peer_message_sender(
+                subsys,
+                sender_peer_message_sender,
+                peer_message_rx,
+                identity,
+                sender_db,
+            )
+        },
     ));
 
     // Send our welcome message
-    peer_sender
-        .broadcast(
-            (PeerMessage::Joined {
-                node_id: my_node_id,
-                time: Datetime::from(Utc::now()),
-            })
-            .sign(&identity.secret_key)?
-            .into(),
-        )
+    peer_message_tx
+        .send(PeerMessage::Joined {
+            node_id: my_node_id,
+            time: Datetime::from(Utc::now()),
+        })
         .await?;
 
     // Wait for shutdown signal
@@ -183,26 +210,20 @@ pub async fn iroh_subsystem(
 
     // Send our leaving event
     info!("Sending leaving message...");
-    peer_sender
-        .broadcast(
-            (PeerMessage::Leaving {
-                node_id: my_node_id,
-                time: Datetime::from(Utc::now()),
-            })
-            .sign(&identity.secret_key)?
-            .into(),
-        )
+    peer_message_tx
+        .send(PeerMessage::Leaving {
+            node_id: my_node_id,
+            time: Datetime::from(Utc::now()),
+        })
         .await?;
-    info!("Leaving message queued");
 
     // Wait for message propagation - this is unfortunately necessary
     // because gossip protocols need time to deliver messages to peers over the network
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // Shutdown the gossip
+    trace!("Shutting down gossip network");
     gossip.shutdown().await?;
-
-    info!("Iroh received shutdown signal");
 
     info!("Iroh subsystem stopped");
     Ok(())
@@ -210,7 +231,9 @@ pub async fn iroh_subsystem(
 
 async fn peer_message_handler(
     _subsys: SubsystemHandle,
+    identity: Identity,
     mut peer_reciever: GossipReceiver,
+    peer_message_tx: mpsc::Sender<PeerMessage>,
     db: db::DB,
 ) -> anyhow::Result<()> {
     while let Some(event) = peer_reciever.try_next().await? {
@@ -220,15 +243,23 @@ async fn peer_message_handler(
 
             match message {
                 PeerMessage::Joined { node_id, time } => {
-                    info!("Peer {node_id} joined at {time}");
+                    trace!(%node_id, %time, "Handling PeerMessage::Joined");
 
                     // Add the peer to the database
                     if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
                         debug!("Failed to add peer {node_id} to database: {e}");
                     }
+
+                    // Send an introduction to the network
+                    peer_message_tx
+                        .send(PeerMessage::Introduction {
+                            node_id: identity.id(),
+                            time: Datetime::from(Utc::now()),
+                        })
+                        .await?;
                 }
                 PeerMessage::Leaving { node_id, time } => {
-                    info!("Peer {node_id} left at {time}");
+                    trace!(%node_id, %time, "Handling PeerMessage::Leaving");
 
                     // Update last_seen time when they leave
                     if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
@@ -236,7 +267,15 @@ async fn peer_message_handler(
                     }
                 }
                 PeerMessage::Heartbeat { node_id, time } => {
-                    info!("Peer {node_id} sent heartbeat at {time}");
+                    trace!(%node_id, %time, "Handling PeerMessage::Heartbeat");
+
+                    // Update last_seen time on heartbeat
+                    if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
+                        debug!("Failed to update peer {node_id} heartbeat time: {e}");
+                    }
+                }
+                PeerMessage::Introduction { node_id, time } => {
+                    trace!(%node_id, %time, "Handling PeerMessage::Introduction");
 
                     // Update last_seen time on heartbeat
                     if let Err(e) = db::Peer::add_peer(&db, node_id, Some(time)).await {
@@ -244,6 +283,35 @@ async fn peer_message_handler(
                     }
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+async fn peer_message_sender(
+    subsys: SubsystemHandle,
+    peer_sender: GossipSender,
+    mut peer_message_rx: mpsc::Receiver<PeerMessage>,
+    identity: Identity,
+    _db: db::DB,
+) -> anyhow::Result<()> {
+    loop {
+        select! {
+            Some(message) = peer_message_rx.recv() => {
+                peer_sender
+                    .broadcast(
+                        message
+                        .sign(&identity.secret_key)?
+                        .into(),
+                    )
+                    .await?;
+            }
+
+            _ = subsys.on_shutdown_requested() => {
+
+                    break
+                }
         }
     }
 

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use iroh::{NodeId, SecretKey};
+use iroh::{NodeId, PublicKey, SecretKey};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::any::{self, Any};
@@ -64,6 +64,14 @@ impl Identity {
         };
         debug!(public_key = %identity.secret_key.public(), "Generated new identity");
         identity
+    }
+
+    pub fn public(&self) -> PublicKey {
+        self.secret_key.public()
+    }
+
+    pub fn id(&self) -> NodeId {
+        self.secret_key.public()
     }
 }
 
