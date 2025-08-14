@@ -353,14 +353,25 @@ async fn peer_message_handler(
                     }
                 }
                 PeerMessage::Introduction {
-                    node_id,
-                    time,
-                    hostname,
+                    ref node_id,
+                    ref time,
+                    ref hostname,
                 } => {
                     trace!(%node_id, %time, "Handling PeerMessage::Introduction");
 
+                    Event::log(
+                        EventType::PeerMessage {
+                            message_type: message.to_string(),
+                        },
+                        "Got introduction".into(),
+                        serde_json::to_value(message.clone()).ok(),
+                    )
+                    .await?;
+
                     // Update last_seen time on heartbeat
-                    if let Err(e) = db::Peer::upsert_peer(node_id, Some(time), hostname).await {
+                    if let Err(e) =
+                        db::Peer::upsert_peer(*node_id, Some(time.clone()), hostname.clone()).await
+                    {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }
