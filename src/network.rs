@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::db::{Event, EventType, Identity, Peer};
+use crate::db::{Event, EventType, Identity, Peer, age_public_key_to_string};
 use crate::utils::topic_id;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,6 +67,7 @@ pub enum PeerMessage {
         node_id: NodeId,
         time: DateTime<Utc>,
         hostname: Option<String>,
+        age_public_key: String,
     },
     #[serde(rename = "LEAVING")]
     Leaving {
@@ -78,6 +79,7 @@ pub enum PeerMessage {
         node_id: NodeId,
         time: DateTime<Utc>,
         hostname: Option<String>,
+        age_public_key: String,
     },
     #[serde(rename = "HEARTBEAT")]
     Heartbeat {
@@ -386,6 +388,7 @@ async fn gossip_setup_task(
             node_id: identity.id(),
             time: Utc::now(),
             hostname: get_hostname(),
+            age_public_key: age_public_key_to_string(&identity.age_key),
         },
     )
     .await?;
@@ -458,11 +461,12 @@ async fn peer_message_listener_task(
                     node_id,
                     time,
                     hostname,
+                    age_public_key,
                 } => {
                     trace!(%node_id, %time, "Handling PeerMessage::Joined");
 
                     // Add the peer to the database
-                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), hostname.clone()).await {
+                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), hostname.clone(), Some(age_public_key)).await {
                         debug!("Failed to upsert peer {node_id} to database: {e}");
                     }
 
@@ -473,6 +477,7 @@ async fn peer_message_listener_task(
                             node_id: identity.id(),
                             time: Utc::now(),
                             hostname,
+                            age_public_key: age_public_key_to_string(&identity.age_key),
                         },
                     )
                     .await?;
@@ -481,7 +486,7 @@ async fn peer_message_listener_task(
                     trace!(%node_id, %time, "Handling PeerMessage::Leaving");
 
                     // Update last_seen time when they leave
-                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), None).await {
+                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), None, None).await {
                         debug!("Failed to update peer {node_id} last_seen time: {e}");
                     }
                 }
@@ -489,7 +494,7 @@ async fn peer_message_listener_task(
                     trace!(%node_id, %time, "Handling PeerMessage::Heartbeat");
 
                     // Update last_seen time on heartbeat
-                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), None).await {
+                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), None, None).await {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }
@@ -497,6 +502,7 @@ async fn peer_message_listener_task(
                     ref node_id,
                     ref time,
                     ref hostname,
+                    ref age_public_key,
                 } => {
                     trace!(%node_id, %time, "Handling PeerMessage::Introduction");
 
@@ -510,7 +516,7 @@ async fn peer_message_listener_task(
                     .await?;
 
                     // Update last_seen time on introduction
-                    if let Err(e) = Peer::upsert_peer(*node_id, Some(*time), hostname.clone()).await {
+                    if let Err(e) = Peer::upsert_peer(*node_id, Some(*time), hostname.clone(), Some(age_public_key.clone())).await {
                         debug!("Failed to update peer {node_id} introduction time: {e}");
                     }
                 }

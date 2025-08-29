@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT node_id, last_seen, hostname FROM peers ORDER BY last_seen DESC",
+  "query": "SELECT node_id, last_seen, hostname, age_public_key FROM peers ORDER BY last_seen DESC",
   "describe": {
     "columns": [
       {
@@ -17,6 +17,11 @@
         "name": "hostname",
         "ordinal": 2,
         "type_info": "Text"
+      },
+      {
+        "name": "age_public_key",
+        "ordinal": 3,
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -25,8 +30,9 @@
     "nullable": [
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "1d5b6ff8f5b5176ca793247d4ebedfac17d00d2f6b378365e01ebcc04fbf43b6"
+  "hash": "cc90148e4147358078c446c4a882e9d3e2311dc92b19c5257c9bae19f0313284"
 }

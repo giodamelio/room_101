@@ -63,9 +63,16 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                         }
 
                         @if let Some(hostname) = &peer.hostname {
-                            div style="display: flex; align-items: center; font-size: 0.85em; color: #666;" {
+                            div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #666;" {
                                 span style="margin-right: 6px;" { "🏠" }
                                 span { (hostname) }
+                            }
+                        }
+
+                        @if let Some(age_key) = &peer.age_public_key {
+                            div style="display: flex; align-items: center; font-size: 0.85em; color: #666;" {
+                                span style="margin-right: 6px;" { "🔐" }
+                                span style="font-family: monospace; word-break: break-all;" { (age_key) }
                             }
                         }
                     }

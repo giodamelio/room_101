@@ -39,6 +39,10 @@ fn age_identity_from_str(s: &str) -> Result<AgeIdentity, anyhow::Error> {
         .map_err(|e| anyhow::anyhow!("Failed to parse AgeIdentity: {}", e))
 }
 
+pub fn age_public_key_to_string(age_key: &AgeIdentity) -> String {
+    age_key.to_public().to_string()
+}
+
 /// Custom serde serialization module for AgeIdentity
 ///
 /// Provides safe serialization/deserialization for age::x25519::Identity using
@@ -195,6 +199,7 @@ pub struct Peer {
     pub node_id: String,                  // NodeId as string
     pub last_seen: Option<NaiveDateTime>, // SQLite datetime
     pub hostname: Option<String>,
+    pub age_public_key: Option<String>, // Age public key as string
 }
 
 impl Peer {
@@ -202,7 +207,7 @@ impl Peer {
         let db = get_db();
         let peers = sqlx::query_as!(
             Peer,
-            "SELECT node_id, last_seen, hostname FROM peers ORDER BY last_seen DESC"
+            "SELECT node_id, last_seen, hostname, age_public_key FROM peers ORDER BY last_seen DESC"
         )
         .fetch_all(db)
         .await?;
@@ -218,9 +223,10 @@ impl Peer {
         let db = get_db();
         let node_id_str = node_id_to_string(&node_id);
         sqlx::query!(
-            "INSERT INTO peers (node_id, last_seen, hostname) VALUES (?, ?, ?)",
+            "INSERT INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)",
             node_id_str,
             None::<NaiveDateTime>,
+            None::<String>,
             None::<String>
         )
         .execute(db)
@@ -232,18 +238,21 @@ impl Peer {
         node_id: NodeId,
         last_seen: Option<DateTime<Utc>>,
         hostname: Option<String>,
+        age_public_key: Option<String>,
     ) -> anyhow::Result<()> {
         let db = get_db();
         let node_id_str = node_id_to_string(&node_id);
         let last_seen_naive = last_seen.map(|dt| dt.naive_utc());
         sqlx::query!(
-            "INSERT INTO peers (node_id, last_seen, hostname) VALUES (?, ?, ?)
+            "INSERT INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)
              ON CONFLICT(node_id) DO UPDATE SET
              last_seen = COALESCE(excluded.last_seen, peers.last_seen),
-             hostname = COALESCE(excluded.hostname, peers.hostname)",
+             hostname = COALESCE(excluded.hostname, peers.hostname),
+             age_public_key = COALESCE(excluded.age_public_key, peers.age_public_key)",
             node_id_str,
             last_seen_naive,
-            hostname
+            hostname,
+            age_public_key
         )
         .execute(db)
         .await?;
@@ -257,9 +266,10 @@ impl Peer {
         for node_id in nodes {
             let node_id_str = node_id_to_string(&node_id);
             sqlx::query!(
-                "INSERT OR IGNORE INTO peers (node_id, last_seen, hostname) VALUES (?, ?, ?)",
+                "INSERT OR IGNORE INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)",
                 node_id_str,
                 None::<NaiveDateTime>,
+                None::<String>,
                 None::<String>
             )
             .execute(&mut *tx)
