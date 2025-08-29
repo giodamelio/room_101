@@ -5,7 +5,7 @@ use maud::{DOCTYPE, Markup, html};
 use poem::{Endpoint, EndpointExt, Route, Server, get, handler, listener::TcpListener, web::Form};
 use serde::Deserialize;
 use tokio::sync::broadcast;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{
     db::{Event, EventType, Peer},

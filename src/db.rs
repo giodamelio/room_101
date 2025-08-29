@@ -247,7 +247,7 @@ pub async fn init_db(db_path: &str) -> Result<()> {
             "In-memory database not allowed. Use init_test_db() for tests."
         ));
     } else {
-        format!("sqlite:{}?mode=rwc", db_path) // rwc = read/write/create
+        format!("sqlite:{db_path}?mode=rwc") // rwc = read/write/create
     };
 
     let pool = SqlitePool::connect(&connection_string).await?;
