@@ -497,6 +497,13 @@ fn tmpl_secret_detail_grouped(
                                 "🔓 Reveal Secret"
                             }
                             button
+                                hx-get=(format!("/secrets/{}/{}/share", secret.name, secret.hash))
+                                hx-target="#share-content"
+                                style="padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                            {
+                                "🔗 Share Secret"
+                            }
+                            button
                                 hx-post=(format!("/secrets/{}/{}/delete", secret.name, secret.hash))
                                 hx-target="body"
                                 hx-swap="innerHTML"
@@ -508,6 +515,9 @@ fn tmpl_secret_detail_grouped(
                         }
                         div id="secret-content" style="margin-top: 12px;" {
                             // Content will be loaded here by htmx
+                        }
+                        div id="share-content" style="margin-top: 12px;" {
+                            // Share form will be loaded here by htmx
                         }
                     }
                 }
@@ -688,6 +698,356 @@ async fn hide_secret(
             "👁️ Reveal Secret"
         }
     })
+}
+
+#[handler]
+async fn share_secret_form(
+    poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
+) -> Result<Markup> {
+    let identity = get_current_identity().await?;
+    let current_node_id = identity.id();
+
+    // Get the secrets with this name/hash
+    let secrets = Secret::find_by_name_and_hash(&name, &hash)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Verify user owns this secret
+    let _owned_secret = secrets
+        .iter()
+        .find(|s| {
+            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == current_node_id
+        })
+        .ok_or_else(|| AppError::Forbidden("You can only share secrets you own".to_string()))?;
+
+    // Get all peers
+    let all_peers = Peer::list()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Create hostname lookup map
+    let peer_hostnames: std::collections::HashMap<String, Option<String>> = all_peers
+        .iter()
+        .map(|p| (p.node_id.clone(), p.hostname.clone()))
+        .collect();
+
+    // Get existing target node IDs for this secret
+    let existing_targets: std::collections::HashSet<String> =
+        secrets.iter().map(|s| s.target_node_id.clone()).collect();
+
+    // Filter out peers who already have this secret
+    let available_peers: Vec<Peer> = all_peers
+        .into_iter()
+        .filter(|peer| !existing_targets.contains(&peer.node_id))
+        .collect();
+
+    Ok(tmpl_share_secret(
+        &name,
+        &hash,
+        &secrets,
+        available_peers,
+        current_node_id,
+        &peer_hostnames,
+    ))
+}
+
+#[handler]
+async fn process_share_secret(
+    poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
+    body: Body,
+    Data(peer_message_tx): Data<&mpsc::Sender<PeerMessage>>,
+) -> Result<Markup> {
+    let identity = get_current_identity().await?;
+    let current_node_id = identity.id();
+
+    // Parse form data
+    let body_bytes = body
+        .into_bytes()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Failed to read body: {e}")))?;
+
+    let mut target_nodes = Vec::new();
+    for (key, value) in form_urlencoded::parse(&body_bytes) {
+        if key.as_ref() == "target_nodes[]" {
+            target_nodes.push(value.into_owned());
+        }
+    }
+
+    if target_nodes.is_empty() {
+        return Err(AppError::BadRequest(
+            "At least one target node must be selected".to_string(),
+        ));
+    }
+
+    // Get the secrets with this name/hash
+    let secrets = Secret::find_by_name_and_hash(&name, &hash)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Find the secret owned by current node
+    let owned_secret = secrets
+        .iter()
+        .find(|s| {
+            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == current_node_id
+        })
+        .ok_or_else(|| AppError::Forbidden("You can only share secrets you own".to_string()))?;
+
+    // Decrypt the secret content
+    let decrypted_content = decrypt_secret_for_identity(&owned_secret.encrypted_data, &identity)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to decrypt secret: {e}")))?;
+
+    // Create secret copies for each selected target node
+    for node_id_str in target_nodes {
+        let target_node_id = node_id_str
+            .parse::<NodeId>()
+            .map_err(|e| AppError::BadRequest(format!("Invalid node ID {node_id_str}: {e}")))?;
+
+        // Check if this target already has the secret
+        let already_exists = secrets.iter().any(|s| {
+            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == target_node_id
+        });
+
+        if already_exists {
+            debug!(
+                "Secret '{}' already exists for node {}, skipping",
+                name, target_node_id
+            );
+            continue;
+        }
+
+        let new_secret = Secret::create(name.clone(), &decrypted_content, target_node_id)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to create secret copy: {e}")))?;
+
+        // Announce the secret to the network
+        if let Err(e) = announce_secret(&new_secret, peer_message_tx.clone()).await {
+            error!(
+                "Failed to announce shared secret '{}': {}",
+                new_secret.name, e
+            );
+        }
+
+        debug!(
+            "Shared secret '{}' with node {}",
+            new_secret.name, new_secret.target_node_id
+        );
+    }
+
+    // Get updated secrets and return complete page with success notification
+    let updated_secrets = Secret::find_by_name_and_hash(&name, &hash)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let peers = Peer::list()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Create hostname lookup map
+    let peer_hostnames: std::collections::HashMap<String, Option<String>> = peers
+        .iter()
+        .map(|p| (p.node_id.clone(), p.hostname.clone()))
+        .collect();
+
+    let secret = &updated_secrets[0];
+
+    Ok(layout(html! {
+        // Success notification
+        div style="background: #dcfce7; border: 1px solid #22c55e; border-radius: 8px; padding: 16px; margin-bottom: 20px;" {
+            div style="display: flex; align-items: center;" {
+                span style="color: #22c55e; font-size: 1.2em; margin-right: 8px;" { "✅" }
+                span style="font-weight: bold; color: #166534;" { "Secret Shared Successfully" }
+            }
+            p style="margin: 8px 0 0 0; color: #166534;" {
+                "The secret has been shared with the selected peers and announced to the network."
+            }
+        }
+
+        nav style="margin-bottom: 20px;" {
+            a href="/secrets" { "← Back to Secrets" }
+        }
+
+        h1 { "Secret: " (secret.name) }
+
+        div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;" {
+            div style="display: grid; gap: 16px;" {
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Name" }
+                    code style="background: #f1f5f9; padding: 8px; border-radius: 4px; display: block; font-size: 1.1em;" {
+                        (secret.name)
+                    }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Target Nodes" }
+                    div style="display: flex; flex-wrap: wrap; gap: 8px;" {
+                        @for secret in &updated_secrets {
+                            div style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; border: 1px solid #e2e8f0;" {
+                                code { (secret.target_node_id) }
+                                @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
+                                    span style="color: #059669; margin-left: 8px;" { "(" (hostname) ")" }
+                                }
+                                @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
+                                    span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 8px;" {
+                                        "YOU"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Hash" }
+                    code style="background: #f1f5f9; padding: 8px; border-radius: 4px; display: block; word-break: break-all;" {
+                        (secret.hash)
+                    }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Created" }
+                    span style="color: #6b7280;" { (format_relative_time(&secret.get_created_at_utc())) }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Last Updated" }
+                    span style="color: #6b7280;" { (format_relative_time(&secret.get_updated_at_utc())) }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 8px;" { "Encrypted Content" }
+                    div style="display: flex; gap: 12px; margin-bottom: 12px;" {
+                        button
+                            hx-post=(format!("/secrets/{}/{}/reveal", secret.name, secret.hash))
+                            hx-target="#secret-content"
+                            style="padding: 8px 16px; background: #059669; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                        {
+                            "🔓 Reveal Secret"
+                        }
+                        button
+                            hx-get=(format!("/secrets/{}/{}/share", secret.name, secret.hash))
+                            hx-target="#share-content"
+                            style="padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                        {
+                            "🔗 Share Secret"
+                        }
+                        button
+                            hx-post=(format!("/secrets/{}/{}/delete", secret.name, secret.hash))
+                            hx-target="body"
+                            hx-swap="innerHTML"
+                            hx-confirm="Are you sure you want to delete this secret? This action cannot be undone and will notify all peers."
+                            style="padding: 8px 16px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                        {
+                            "🗑️ Delete Secret"
+                        }
+                    }
+                    div id="secret-content" style="margin-top: 12px;" {
+                        // Content will be loaded here by htmx
+                    }
+                    div id="share-content" style="margin-top: 12px;" {
+                        // Share form will be loaded here by htmx
+                    }
+                }
+            }
+        }
+    }))
+}
+
+fn tmpl_share_secret(
+    secret_name: &str,
+    secret_hash: &str,
+    current_targets: &[Secret],
+    available_peers: Vec<Peer>,
+    current_node_id: NodeId,
+    peer_hostnames: &std::collections::HashMap<String, Option<String>>,
+) -> Markup {
+    html! {
+        div style="background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px; padding: 16px; margin-top: 16px;" {
+            h3 style="margin: 0 0 12px 0; color: #0369a1;" { "🔗 Share Secret" }
+
+            @if available_peers.is_empty() {
+                p style="color: #6b7280; margin: 0;" {
+                    "This secret is already shared with all available peers."
+                }
+            } @else {
+                div style="margin-bottom: 16px;" {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 8px;" {
+                        "Current Access"
+                    }
+                    div style="display: flex; flex-wrap: wrap; gap: 4px;" {
+                        @for secret in current_targets {
+                            div style="background: #dcfce7; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; color: #166534;" {
+                                code { (secret.target_node_id) }
+                                @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
+                                    span style="margin-left: 4px;" { "(" (hostname) ")" }
+                                }
+                                @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
+                                    span style="background: #fef3c7; color: #d97706; padding: 1px 4px; border-radius: 3px; font-size: 0.7em; margin-left: 4px;" {
+                                        "YOU"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                form hx-post=(format!("/secrets/{}/{}/share", secret_name, secret_hash)) hx-target="body" hx-swap="innerHTML" {
+                    div style="margin-bottom: 16px;" {
+                        label style="font-weight: bold; color: #374151; display: block; margin-bottom: 8px;" {
+                            "Share With Additional Peers"
+                        }
+                        div style="display: grid; gap: 8px; max-height: 150px; overflow-y: auto; border: 1px solid #d1d5db; border-radius: 4px; padding: 8px;" {
+                            @for peer in &available_peers {
+                                div style="display: flex; align-items: center; padding: 4px;" {
+                                    input
+                                        type="checkbox"
+                                        name="target_nodes[]"
+                                        value=(peer.node_id)
+                                        id=(format!("share-peer-{}", peer.node_id))
+                                        style="margin-right: 8px;"
+                                        ;
+                                    label
+                                        for=(format!("share-peer-{}", peer.node_id))
+                                        style="flex: 1; display: flex; align-items: center; cursor: pointer;"
+                                        {
+                                        div style="flex: 1;" {
+                                            div style="font-family: monospace; font-size: 0.8em;" {
+                                                (peer.node_id)
+                                            }
+                                            @if let Some(hostname) = &peer.hostname {
+                                                div style="font-size: 0.8em; color: #059669;" {
+                                                    (hostname)
+                                                }
+                                            }
+                                        }
+                                        @if let Some(_) = peer.last_seen {
+                                            span style="color: #22c55e; margin-left: 8px;" { "●" }
+                                        } @else {
+                                            span style="color: #6b7280; margin-left: 8px;" { "○" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    div style="display: flex; gap: 12px;" {
+                        input
+                            type="submit"
+                            value="🔗 Share Secret"
+                            style="background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;"
+                            ;
+                        button
+                            type="button"
+                            hx-get=""
+                            hx-target="#share-content"
+                            hx-swap="innerHTML"
+                            style="background: #6b7280; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;"
+                            { "Cancel" }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn tmpl_add_secret(peers: Vec<Peer>, current_node_id: NodeId) -> Markup {
@@ -1019,6 +1379,10 @@ pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
         .at("/secrets/:name/:hash", get(get_secret_detail))
         .at("/secrets/:name/:hash/reveal", poem::post(reveal_secret))
         .at("/secrets/:name/:hash/hide", poem::post(hide_secret))
+        .at(
+            "/secrets/:name/:hash/share",
+            get(share_secret_form).post(process_share_secret),
+        )
         .at("/secrets/:name/:hash/delete", poem::post(delete_secret))
         .data(peer_message_tx)
         .with(HtmxErrorMiddleware)
