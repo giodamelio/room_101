@@ -94,6 +94,13 @@ pub enum PeerMessage {
         target_node_id: NodeId,
         time: DateTime<Utc>,
     },
+    #[serde(rename = "SECRET_DELETE")]
+    SecretDelete {
+        name: String,
+        hash: String,
+        target_node_id: NodeId,
+        time: DateTime<Utc>,
+    },
 }
 
 impl Display for PeerMessage {
@@ -104,6 +111,7 @@ impl Display for PeerMessage {
             PeerMessage::Introduction { .. } => f.write_str("INTRODUCTION"),
             PeerMessage::Heartbeat { .. } => f.write_str("HEARTBEAT"),
             PeerMessage::Secret { .. } => f.write_str("SECRET"),
+            PeerMessage::SecretDelete { .. } => f.write_str("SECRET_DELETE"),
         }
     }
 }
@@ -237,6 +245,37 @@ pub async fn announce_secret(
     debug!(
         "Announced secret '{}' for node {}",
         secret.name, secret.target_node_id
+    );
+    Ok(())
+}
+
+pub async fn announce_secret_deletion(
+    name: String,
+    hash: String,
+    target_node_id: NodeId,
+    peer_message_tx: mpsc::Sender<PeerMessage>,
+) -> Result<()> {
+    let delete_message = PeerMessage::SecretDelete {
+        name: name.clone(),
+        hash: hash.clone(),
+        target_node_id,
+        time: Utc::now(),
+    };
+
+    // Log secret deletion announcement event
+    Event::log(
+        EventType::PeerMessage {
+            message_type: "SECRET_DELETE".to_string(),
+        },
+        format!("Announcing deletion of secret '{name}' for node {target_node_id}"),
+        serde_json::to_value(&delete_message).ok(),
+    )
+    .await?;
+
+    send_peer_message(peer_message_tx, delete_message).await?;
+    debug!(
+        "Announced deletion of secret '{}' for node {}",
+        name, target_node_id
     );
     Ok(())
 }
@@ -682,6 +721,42 @@ async fn peer_message_listener_task(
                             Err(e) => {
                                 trace!("Failed to store secret '{}' for node {}: {}", name, target_node_id, e);
                             }
+                        }
+                    }
+                }
+                PeerMessage::SecretDelete {
+                    ref name,
+                    ref hash,
+                    ref target_node_id,
+                    ref time,
+                } => {
+                    trace!(%name, %target_node_id, %hash, %time, "Handling PeerMessage::SecretDelete");
+
+                    // Verify that the message sender is the target node (only they can delete their own secrets)
+                    if _from != *target_node_id {
+                        debug!("Ignoring secret deletion from {_from} for secret '{name}' belonging to {target_node_id}");
+                        continue;
+                    }
+
+                    // Delete the secret from our local database
+                    match Secret::delete(name, hash, *target_node_id).await {
+                        Ok(was_deleted) => {
+                            if was_deleted {
+                                debug!("Deleted secret '{}' for node {}", name, target_node_id);
+                                Event::log(
+                                    EventType::PeerMessage {
+                                        message_type: message.to_string(),
+                                    },
+                                    format!("Deleted secret: {name}"),
+                                    serde_json::to_value(message.clone()).ok(),
+                                )
+                                .await?;
+                            } else {
+                                trace!("Secret '{}' with hash {} not found for deletion", name, hash);
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Failed to delete secret '{}': {}", name, e);
                         }
                     }
                 }

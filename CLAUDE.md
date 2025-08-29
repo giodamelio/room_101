@@ -62,3 +62,4 @@ This project uses devenv.nix for reproducible development environments with:
 
 ## Rust Development Workflow
 - Call `cargo check` before finishing any task where you modified Rust source files.
+- Use inlined format arguments in `format!()` macros (e.g., `format!("Hello {name}")` instead of `format!("Hello {}", name)`) to pass clippy linting.

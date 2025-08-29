@@ -705,6 +705,23 @@ impl Secret {
     pub fn get_updated_at_utc(&self) -> DateTime<Utc> {
         DateTime::from_naive_utc_and_offset(self.updated_at, Utc)
     }
+
+    pub async fn delete(name: &str, hash: &str, target_node_id: NodeId) -> Result<bool> {
+        let db = get_db();
+        let target_node_id_str = node_id_to_string(&target_node_id);
+
+        let rows_affected = sqlx::query!(
+            "DELETE FROM secrets WHERE name = ? AND hash = ? AND target_node_id = ?",
+            name,
+            hash,
+            target_node_id_str
+        )
+        .execute(db)
+        .await?
+        .rows_affected();
+
+        Ok(rows_affected > 0)
+    }
 }
 
 static DATABASE: OnceLock<SqlitePool> = OnceLock::new();

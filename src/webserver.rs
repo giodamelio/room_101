@@ -15,7 +15,7 @@ use crate::{
     db::{Event, EventType, GroupedSecret, Identity, Peer, Secret, decrypt_secret_for_identity},
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
-    network::{PeerMessage, announce_secret},
+    network::{PeerMessage, announce_secret, announce_secret_deletion},
 };
 
 fn format_relative_time(datetime: &DateTime<Utc>) -> String {
@@ -304,13 +304,25 @@ fn tmpl_grouped_secret_list(
                                     (grouped_secret.name)
                                 }
                             }
-                            @if grouped_secret.has_target_node(&current_node_id) {
-                                span style="background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 12px; font-size: 0.8em;" {
-                                    "For You"
-                                }
-                            } @else {
-                                span style="background: #f3f4f6; color: #6b7280; padding: 2px 8px; border-radius: 12px; font-size: 0.8em;" {
-                                    "For Others"
+                            div style="display: flex; align-items: center; gap: 8px;" {
+                                @if grouped_secret.has_target_node(&current_node_id) {
+                                    span style="background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 12px; font-size: 0.8em;" {
+                                        "For You"
+                                    }
+                                    button
+                                        hx-post=(format!("/secrets/{}/{}/delete", grouped_secret.name, grouped_secret.hash))
+                                        hx-target="body"
+                                        hx-swap="innerHTML"
+                                        hx-confirm="Are you sure you want to delete this secret? This action cannot be undone."
+                                        style="background: #dc2626; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;"
+                                        title="Delete this secret"
+                                    {
+                                        "🗑️"
+                                    }
+                                } @else {
+                                    span style="background: #f3f4f6; color: #6b7280; padding: 2px 8px; border-radius: 12px; font-size: 0.8em;" {
+                                        "For Others"
+                                    }
                                 }
                             }
                         }
@@ -476,12 +488,23 @@ fn tmpl_secret_detail_grouped(
                 @if is_for_current_node {
                     div {
                         label style="font-weight: bold; color: #374151; display: block; margin-bottom: 8px;" { "Encrypted Content" }
-                        button
-                            hx-post=(format!("/secrets/{}/{}/reveal", secret.name, secret.hash))
-                            hx-target="#secret-content"
-                            style="padding: 8px 16px; background: #059669; color: white; border: none; border-radius: 4px; cursor: pointer;"
-                        {
-                            "🔓 Reveal Secret"
+                        div style="display: flex; gap: 12px; margin-bottom: 12px;" {
+                            button
+                                hx-post=(format!("/secrets/{}/{}/reveal", secret.name, secret.hash))
+                                hx-target="#secret-content"
+                                style="padding: 8px 16px; background: #059669; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                            {
+                                "🔓 Reveal Secret"
+                            }
+                            button
+                                hx-post=(format!("/secrets/{}/{}/delete", secret.name, secret.hash))
+                                hx-target="body"
+                                hx-swap="innerHTML"
+                                hx-confirm="Are you sure you want to delete this secret? This action cannot be undone and will notify all peers."
+                                style="padding: 8px 16px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                            {
+                                "🗑️ Delete Secret"
+                            }
                         }
                         div id="secret-content" style="margin-top: 12px;" {
                             // Content will be loaded here by htmx
@@ -921,6 +944,71 @@ async fn create_peer(form: poem::Result<Form<CreatePeer>>) -> Result<Markup> {
     Ok(tmpl_peer_list(&peers))
 }
 
+#[handler]
+async fn delete_secret(
+    poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
+    Data(peer_message_tx): Data<&mpsc::Sender<PeerMessage>>,
+) -> Result<Markup> {
+    let identity = get_current_identity().await?;
+
+    // Parse the target node ID from the hash - we need to find the secret first
+    let secrets = Secret::find_by_name_and_hash(&name, &hash)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Find the secret meant for the current node
+    let secret = secrets
+        .into_iter()
+        .find(|s| {
+            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == identity.id()
+        })
+        .ok_or_else(|| {
+            AppError::Forbidden("You can only delete secrets that belong to you".to_string())
+        })?;
+
+    let target_node_id = secret
+        .get_target_node_id()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Delete the secret from the database
+    let was_deleted = Secret::delete(&name, &hash, target_node_id)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to delete secret: {e}")))?;
+
+    if was_deleted {
+        // Announce the deletion to the network
+        if let Err(e) = announce_secret_deletion(
+            name.clone(),
+            hash.clone(),
+            target_node_id,
+            peer_message_tx.clone(),
+        )
+        .await
+        {
+            error!("Failed to announce secret deletion '{}': {}", name, e);
+        }
+
+        debug!(
+            "Deleted and announced deletion of secret '{}' for node {}",
+            name, target_node_id
+        );
+    }
+
+    // Redirect back to secrets list
+    let grouped_secrets = Secret::list_all_grouped()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let peers = Peer::list()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    Ok(tmpl_list_grouped_secrets(
+        grouped_secrets,
+        identity.id(),
+        peers,
+    ))
+}
+
 pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
     Route::new()
         .at("/", get(index))
@@ -931,6 +1019,7 @@ pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
         .at("/secrets/:name/:hash", get(get_secret_detail))
         .at("/secrets/:name/:hash/reveal", poem::post(reveal_secret))
         .at("/secrets/:name/:hash/hide", poem::post(hide_secret))
+        .at("/secrets/:name/:hash/delete", poem::post(delete_secret))
         .data(peer_message_tx)
         .with(HtmxErrorMiddleware)
 }
