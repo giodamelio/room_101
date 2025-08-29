@@ -500,6 +500,11 @@ impl GroupedSecret {
         self.get_target_node_ids().contains(&target_str)
     }
 
+    pub fn has_target_node_str(&self, target_node_id_str: &str) -> bool {
+        self.get_target_node_ids()
+            .contains(&target_node_id_str.to_string())
+    }
+
     pub fn get_created_at_utc(&self) -> DateTime<Utc> {
         DateTime::from_naive_utc_and_offset(self.created_at, Utc)
     }

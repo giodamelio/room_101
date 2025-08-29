@@ -4,7 +4,7 @@ use iroh::NodeId;
 use maud::{DOCTYPE, Markup, html};
 use poem::{
     Body, Endpoint, EndpointExt, Route, Server, get, handler, listener::TcpListener, web::Data,
-    web::Form,
+    web::Form, web::Query,
 };
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
@@ -165,9 +165,18 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                         }
 
                         @if let Some(age_key) = &peer.age_public_key {
-                            div style="display: flex; align-items: center; font-size: 0.85em; color: #666;" {
+                            div style="display: flex; align-items: center; margin-bottom: 12px; font-size: 0.85em; color: #666;" {
                                 span style="margin-right: 6px;" { "🔐" }
                                 span style="font-family: monospace; word-break: break-all;" { (age_key) }
+                            }
+                        }
+
+                        div style="text-align: right;" {
+                            a
+                                href=(format!("/secrets?peer={}", peer.node_id))
+                                style="background: #3b82f6; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 0.8em; display: inline-block;"
+                            {
+                                "🔍 View Secrets"
                             }
                         }
                     }
@@ -398,13 +407,45 @@ fn tmpl_list_grouped_secrets(
     grouped_secrets: Vec<GroupedSecret>,
     current_node_id: NodeId,
     peers: Vec<Peer>,
+    peer_filter: Option<String>,
 ) -> Markup {
+    // Find the peer hostname if filtering
+    let filtered_peer_hostname = if let Some(ref filter_id) = peer_filter {
+        peers
+            .iter()
+            .find(|p| p.node_id == *filter_id)
+            .and_then(|p| p.hostname.as_ref())
+    } else {
+        None
+    };
+
     layout(html! {
         nav style="margin-bottom: 20px;" {
             a href="/" { "← Home" }
         }
 
-        h1 { "Secrets" }
+        @if let Some(filter_id) = &peer_filter {
+            div style="background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px; padding: 12px; margin-bottom: 20px;" {
+                div style="display: flex; align-items: center; gap: 8px;" {
+                    span style="color: #0369a1; font-size: 1.2em;" { "🔍" }
+                    span style="font-weight: bold; color: #0369a1;" { "Filtered by Peer:" }
+                    code style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px;" { (filter_id) }
+                    @if let Some(hostname) = filtered_peer_hostname {
+                        span style="color: #059669;" { "(" (hostname) ")" }
+                    }
+                    a href="/secrets" style="background: #6b7280; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 0.8em; margin-left: 8px;" {
+                        "Clear Filter"
+                    }
+                }
+            }
+        }
+
+        h1 {
+            "Secrets"
+            @if let Some(_) = &peer_filter {
+                span style="color: #6b7280; font-weight: normal; font-size: 0.8em;" { " (Filtered)" }
+            }
+        }
         (tmpl_grouped_secret_list(&grouped_secrets, current_node_id, &peers))
 
         h2 { "Add New Secret" }
@@ -434,10 +475,16 @@ async fn list_events() -> Result<Markup> {
 }
 
 #[handler]
-async fn list_secrets() -> Result<Markup> {
-    let grouped_secrets = Secret::list_all_grouped()
+async fn list_secrets(query: Query<SecretsQuery>) -> Result<Markup> {
+    let mut grouped_secrets = Secret::list_all_grouped()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Filter by peer if specified
+    if let Some(peer_filter) = &query.peer {
+        grouped_secrets.retain(|secret| secret.has_target_node_str(peer_filter));
+    }
+
     let peers = Peer::list()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -447,6 +494,7 @@ async fn list_secrets() -> Result<Markup> {
         grouped_secrets,
         identity.id(),
         peers,
+        query.peer.clone(),
     ))
 }
 
@@ -1322,12 +1370,18 @@ async fn create_secret(
         grouped_secrets,
         identity.id(),
         peers,
+        None,
     ))
 }
 
 #[derive(Deserialize, Debug)]
 struct CreatePeer {
     id: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct SecretsQuery {
+    peer: Option<String>,
 }
 
 #[handler]
@@ -1409,6 +1463,7 @@ async fn delete_secret(
         grouped_secrets,
         identity.id(),
         peers,
+        None,
     ))
 }
 
