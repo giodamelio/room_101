@@ -7,19 +7,15 @@ use chrono::{DateTime, Utc};
 use ed25519_dalek::Signature;
 use iroh::{Endpoint, NodeId, Watcher, protocol::Router};
 use iroh::{PublicKey, SecretKey};
-use iroh_gossip::api::{GossipReceiver, GossipSender};
 use iroh_gossip::{ALPN, net::Gossip, proto::TopicId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::select;
 use tokio::sync::mpsc;
-use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
-use tokio_stream::StreamExt;
+use tokio::sync::broadcast;
 use tracing::{debug, info, trace};
+use futures::TryStreamExt;
 
-use crate::db::{
-    self,
-    data::{Event, EventType, Identity},
-};
+use crate::db::{Event, EventType, Identity, Peer};
 use crate::utils::topic_id;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -114,8 +110,23 @@ async fn send_peer_message(
     peer_message_tx: mpsc::Sender<PeerMessage>,
     message: PeerMessage,
 ) -> Result<()> {
-    // Send the actual message
-    peer_message_tx.send(message.clone()).await?;
+    // Send the actual message - use try_send to avoid deadlock during shutdown
+    if let Err(e) = peer_message_tx.try_send(message.clone()) {
+        // If channel is closed/full during shutdown, just log and continue
+        match e {
+            mpsc::error::TrySendError::Closed(_) => {
+                debug!("Peer message channel closed during shutdown, skipping message");
+                return Ok(());
+            }
+            mpsc::error::TrySendError::Full(_) => {
+                // For full channel, still try the blocking send with timeout
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    peer_message_tx.send(message.clone())
+                ).await??;
+            }
+        }
+    }
 
     // Create a log about sending the message (unless it is a heartbeat)
     if matches!(message, PeerMessage::Heartbeat { .. }) {
@@ -137,16 +148,16 @@ async fn send_peer_message(
     Ok(())
 }
 
-pub async fn iroh_subsystem(
-    subsys: SubsystemHandle,
+pub async fn network_manager_task(
+    shutdown_rx: broadcast::Receiver<()>,
     bootstrap_nodes: Option<Vec<NodeId>>,
 ) -> Result<()> {
-    info!("Iroh subsystem started");
+    info!("Network manager starting...");
 
     // Add bootstrap nodes to database if provided
     if let Some(nodes) = bootstrap_nodes {
         info!("Adding {} bootstrap nodes to database", nodes.len());
-        db::data::Peer::insert_bootstrap_nodes(nodes)
+        Peer::insert_bootstrap_nodes(nodes)
             .await
             .context("Failed to add bootstrap nodes to database")?;
     }
@@ -161,7 +172,7 @@ pub async fn iroh_subsystem(
     // Create endpoint for this node
     debug!("Creating iroh endpoint with identity");
     let endpoint = Endpoint::builder()
-        .secret_key(identity.secret_key.inner().clone())
+        .secret_key(identity.secret_key.clone())
         .discovery_n0()
         .bind()
         .await
@@ -186,8 +197,142 @@ pub async fn iroh_subsystem(
         .accept(ALPN, gossip.clone())
         .spawn();
 
+    // Create oneshot channels for coordinating gossip handles
+    let (listener_gossip_tx, listener_gossip_rx) = tokio::sync::oneshot::channel::<iroh_gossip::api::GossipReceiver>();
+    let (sender_gossip_tx, sender_gossip_rx) = tokio::sync::oneshot::channel::<iroh_gossip::api::GossipSender>();
+    let (heartbeat_sender_gossip_tx, heartbeat_sender_gossip_rx) = tokio::sync::oneshot::channel::<iroh_gossip::api::GossipSender>();
+    
+    // Create separate channels for message passing
+    let (listener_tx, listener_rx) = tokio::sync::mpsc::channel::<PeerMessage>(100);
+    let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel::<PeerMessage>(100);
+
+    // Spawn all network subtasks immediately so they can receive shutdown signals
+    let mut tasks = Vec::new();
+
+    // Gossip setup task - handles the blocking subscribe_and_join operation
+    let gossip_setup_shutdown_rx = shutdown_rx.resubscribe();
+    let gossip_for_setup = gossip.clone();
+    let identity_for_setup = identity.clone();
+    let listener_tx_for_setup = listener_tx.clone();
+    tasks.push(tokio::spawn(async move {
+        if let Err(e) = gossip_setup_task(
+            gossip_setup_shutdown_rx,
+            gossip_for_setup,
+            identity_for_setup,
+            listener_gossip_tx,
+            sender_gossip_tx,
+            heartbeat_sender_gossip_tx,
+            listener_tx_for_setup,
+        ).await {
+            tracing::error!("Gossip setup task error: {}", e);
+        }
+        info!("Gossip setup task completed");
+    }));
+
+    // Peer message listener task
+    let listener_identity = identity.clone();
+    let listener_shutdown_rx = shutdown_rx.resubscribe();
+    let listener_tx_for_handler = listener_tx.clone();
+    tasks.push(tokio::spawn(async move {
+        if let Err(e) = peer_message_listener_task(
+            listener_shutdown_rx,
+            listener_identity,
+            listener_gossip_rx,
+            listener_tx_for_handler,
+        ).await {
+            tracing::error!("Peer message listener error: {}", e);
+        }
+        info!("Peer message listener completed");
+    }));
+
+    // Listener message sender task
+    let listener_sender_identity = identity.clone();
+    let listener_sender_shutdown_rx = shutdown_rx.resubscribe();
+    tasks.push(tokio::spawn(async move {
+        if let Err(e) = peer_message_sender_task(
+            listener_sender_shutdown_rx,
+            sender_gossip_rx,
+            listener_rx,
+            listener_sender_identity,
+        ).await {
+            tracing::error!("Listener message sender error: {}", e);
+        }
+        info!("Listener message sender completed");
+    }));
+
+    // Heartbeat task
+    let heartbeat_identity = identity.clone();
+    let heartbeat_shutdown_rx = shutdown_rx.resubscribe();
+    tasks.push(tokio::spawn(async move {
+        if let Err(e) = peer_message_heartbeat(heartbeat_shutdown_rx, heartbeat_identity, heartbeat_tx).await {
+            tracing::error!("Heartbeat task error: {}", e);
+        }
+        info!("Heartbeat task completed");
+    }));
+
+    // Heartbeat message sender task  
+    let heartbeat_sender_identity = identity.clone();
+    let heartbeat_sender_shutdown_rx = shutdown_rx.resubscribe();
+    tasks.push(tokio::spawn(async move {
+        if let Err(e) = peer_message_sender_task(
+            heartbeat_sender_shutdown_rx,
+            heartbeat_sender_gossip_rx,
+            heartbeat_rx,
+            heartbeat_sender_identity,
+        ).await {
+            tracing::error!("Heartbeat message sender error: {}", e);
+        }
+        info!("Heartbeat message sender completed");
+    }));
+
+    info!("Network manager running, all subtasks spawned. Waiting for shutdown...");
+    
+    // Wait for shutdown signal
+    let mut shutdown_rx = shutdown_rx;
+    let _ = shutdown_rx.recv().await;
+    info!("Network manager received shutdown signal, cleaning up...");
+
+    // Shutdown the gossip with timeout protection
+    info!("Shutting down gossip network...");
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        gossip.shutdown()
+    ).await {
+        Ok(result) => {
+            result?;
+            info!("Gossip network shutdown complete");
+        }
+        Err(_) => {
+            info!("Gossip network shutdown timed out after 5 seconds, forcing shutdown");
+        }
+    }
+
+    // Wait for all network subtasks to complete
+    info!("Waiting for network subtasks to complete...");
+    let task_results = futures::future::join_all(tasks).await;
+    for result in task_results {
+        if let Err(e) = result {
+            tracing::error!("Network subtask panicked: {}", e);
+        }
+    }
+
+    info!("Network manager stopped cleanly");
+    Ok(())
+}
+
+async fn gossip_setup_task(
+    mut shutdown_rx: broadcast::Receiver<()>,
+    gossip: Gossip,
+    identity: Identity,
+    listener_gossip_tx: tokio::sync::oneshot::Sender<iroh_gossip::api::GossipReceiver>,
+    sender_gossip_tx: tokio::sync::oneshot::Sender<iroh_gossip::api::GossipSender>,
+    heartbeat_sender_gossip_tx: tokio::sync::oneshot::Sender<iroh_gossip::api::GossipSender>,
+    listener_tx: mpsc::Sender<PeerMessage>,
+) -> anyhow::Result<()> {
+    info!("Gossip setup task starting...");
+
     // Get known peers for gossip (let Iroh discover addressing via relay/DHT)
-    let all_peer_ids = db::data::Peer::list_node_ids().await?;
+    let all_peer_ids = Peer::list_node_ids().await?;
     let peers: Vec<NodeId> = all_peer_ids
         .into_iter()
         .filter(|&peer_id| peer_id != identity.id()) // Don't include ourself
@@ -195,55 +340,29 @@ pub async fn iroh_subsystem(
 
     debug!("Known peers for gossip discovery: {:?}", peers);
 
-    info!("Accepting connections, Our Node ID: {}", node_addr.node_id);
+    // Subscribe to the peers topic with shutdown awareness
+    info!("Subscribing to gossip topic with {} known peers", peers.len());
+    let gossip_result = select! {
+        result = gossip.subscribe_and_join(PEER_TOPIC, peers) => {
+            result.context("Failed to subscribe to gossip topic")
+        }
+        _ = shutdown_rx.recv() => {
+            info!("Gossip setup task received shutdown before subscription completed");
+            return Ok(());
+        }
+    };
 
-    // Subscribe to the peers topic
-    let (peer_sender, peer_reciever) = gossip.subscribe_and_join(PEER_TOPIC, peers).await?.split();
-    let (peer_message_tx, peer_message_rx) = tokio::sync::mpsc::channel::<PeerMessage>(5);
+    let (peer_sender, peer_reciever) = gossip_result?.split();
+    info!("Successfully subscribed to gossip topic");
 
-    // Listen to incoming PeerMessages
-    let listener_peer_message_tx = peer_message_tx.clone();
-    let listener_identity = identity.clone();
-    subsys.start(SubsystemBuilder::new(
-        "peer-message-listener",
-        move |subsys| {
-            peer_message_handler(
-                subsys,
-                listener_identity,
-                peer_reciever,
-                listener_peer_message_tx,
-            )
-        },
-    ));
-
-    // Send outgoing messages
-    let sender_peer_message_sender = peer_sender.clone();
-    let sender_identity = identity.clone();
-    subsys.start(SubsystemBuilder::new(
-        "peer-message-sender",
-        move |subsys| {
-            peer_message_sender(
-                subsys,
-                sender_peer_message_sender,
-                peer_message_rx,
-                sender_identity,
-            )
-        },
-    ));
-
-    // Send heartbeat
-    let heartbeat_peer_message_sender = peer_message_tx.clone();
-    let heartbeat_identity = identity.clone();
-    subsys.start(SubsystemBuilder::new(
-        "peer-message-hearbeat",
-        move |subsys| {
-            peer_message_heartbeat(subsys, heartbeat_identity, heartbeat_peer_message_sender)
-        },
-    ));
+    // Send gossip handles to other tasks
+    let _ = listener_gossip_tx.send(peer_reciever);
+    let _ = sender_gossip_tx.send(peer_sender.clone());
+    let _ = heartbeat_sender_gossip_tx.send(peer_sender);
 
     // Send our welcome message
     send_peer_message(
-        peer_message_tx.clone(),
+        listener_tx.clone(),
         PeerMessage::Joined {
             node_id: identity.id(),
             time: Utc::now(),
@@ -252,44 +371,67 @@ pub async fn iroh_subsystem(
     )
     .await?;
 
-    // Wait for shutdown signal
-    subsys.on_shutdown_requested().await;
+    // Wait for shutdown
+    let _ = shutdown_rx.recv().await;
+    info!("Gossip setup task received shutdown signal");
 
-    // Send our leaving event
+    // Send leaving message
     info!("Sending leaving message...");
-    send_peer_message(
-        peer_message_tx.clone(),
-        PeerMessage::Leaving {
-            node_id: identity.id(),
-            time: Utc::now(),
-        },
-    )
-    .await?;
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        send_peer_message(
+            listener_tx.clone(),
+            PeerMessage::Leaving {
+                node_id: identity.id(),
+                time: Utc::now(),
+            },
+        )
+    ).await {
+        Ok(result) => {
+            result?;
+            info!("Leaving message sent successfully");
+        }
+        Err(_) => {
+            info!("Leaving message send timed out, continuing shutdown");
+        }
+    }
 
-    // Wait for message propagation - this is unfortunately necessary
-    // because gossip protocols need time to deliver messages to peers over the network
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    // Shutdown the gossip
-    trace!("Shutting down gossip network");
-    gossip.shutdown().await?;
-
-    info!("Iroh subsystem stopped");
+    info!("Gossip setup task stopped cleanly");
     Ok(())
 }
 
-async fn peer_message_handler(
-    _subsys: SubsystemHandle,
+async fn peer_message_listener_task(
+    mut shutdown_rx: broadcast::Receiver<()>,
     identity: Identity,
-    mut peer_reciever: GossipReceiver,
+    gossip_rx: tokio::sync::oneshot::Receiver<iroh_gossip::api::GossipReceiver>,
     peer_message_tx: mpsc::Sender<PeerMessage>,
 ) -> anyhow::Result<()> {
-    while let Some(event) = peer_reciever.try_next().await? {
-        if let iroh_gossip::api::Event::Received(message) = event {
-            let (_from, message): (NodeId, PeerMessage) =
-                SignedMessage::verify_and_decode(&message.content)?;
+    info!("Peer message listener starting...");
 
-            match message {
+    // Wait for gossip handles or shutdown
+    let mut peer_reciever = select! {
+        receiver = gossip_rx => {
+            receiver.map_err(|_| anyhow::anyhow!("Gossip setup task dropped"))?
+        }
+        _ = shutdown_rx.recv() => {
+            info!("Peer message listener received shutdown before gossip ready");
+            return Ok(());
+        }
+    };
+
+    info!("Peer message listener got gossip receiver, starting message loop...");
+
+    loop {
+        select! {
+            event = peer_reciever.try_next() => {
+                let Some(event) = event? else {
+                    break;
+                };
+                if let iroh_gossip::api::Event::Received(message) = event {
+                    let (_from, message): (NodeId, PeerMessage) =
+                        SignedMessage::verify_and_decode(&message.content)?;
+
+                    match message {
                 PeerMessage::Joined {
                     node_id,
                     time,
@@ -298,9 +440,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Joined");
 
                     // Add the peer to the database
-                    if let Err(e) =
-                        db::data::Peer::upsert_peer(node_id, Some(time), hostname.clone()).await
-                    {
+                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), hostname.clone()).await {
                         debug!("Failed to upsert peer {node_id} to database: {e}");
                     }
 
@@ -319,7 +459,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Leaving");
 
                     // Update last_seen time when they leave
-                    if let Err(e) = db::data::Peer::upsert_peer(node_id, Some(time), None).await {
+                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), None).await {
                         debug!("Failed to update peer {node_id} last_seen time: {e}");
                     }
                 }
@@ -327,7 +467,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Heartbeat");
 
                     // Update last_seen time on heartbeat
-                    if let Err(e) = db::data::Peer::upsert_peer(node_id, Some(time), None).await {
+                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), None).await {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }
@@ -348,50 +488,74 @@ async fn peer_message_handler(
                     .await?;
 
                     // Update last_seen time on introduction
-                    if let Err(e) =
-                        db::data::Peer::upsert_peer(*node_id, Some(*time), hostname.clone()).await
-                    {
+                    if let Err(e) = Peer::upsert_peer(*node_id, Some(*time), hostname.clone()).await {
                         debug!("Failed to update peer {node_id} introduction time: {e}");
                     }
                 }
+                    }
+                }
+            }
+            _ = shutdown_rx.recv() => {
+                info!("Peer message listener received shutdown signal");
+                break;
             }
         }
     }
 
+    info!("Peer message listener stopped");
     Ok(())
 }
 
-async fn peer_message_sender(
-    subsys: SubsystemHandle,
-    peer_sender: GossipSender,
+async fn peer_message_sender_task(
+    mut shutdown_rx: broadcast::Receiver<()>,
+    gossip_rx: tokio::sync::oneshot::Receiver<iroh_gossip::api::GossipSender>,
     mut peer_message_rx: mpsc::Receiver<PeerMessage>,
     identity: Identity,
 ) -> anyhow::Result<()> {
+    info!("Peer message sender starting...");
+
+    // Wait for gossip handles or shutdown
+    let peer_sender = select! {
+        sender = gossip_rx => {
+            sender.map_err(|_| anyhow::anyhow!("Gossip setup task dropped"))?
+        }
+        _ = shutdown_rx.recv() => {
+            info!("Peer message sender received shutdown before gossip ready");
+            return Ok(());
+        }
+    };
+
+    info!("Peer message sender got gossip sender, starting message loop...");
+
     loop {
         select! {
             Some(message) = peer_message_rx.recv() => {
                 peer_sender
                     .broadcast(
                         message
-                            .sign(identity.secret_key.inner())?
+                            .sign(&identity.secret_key)?
                             .into(),
                     )
                 .await?;
             }
-            _ = subsys.on_shutdown_requested() => {
+            _ = shutdown_rx.recv() => {
+                info!("Peer message sender received shutdown signal");
                 break
             }
         }
     }
 
+    info!("Peer message sender stopped");
     Ok(())
 }
 
+
 async fn peer_message_heartbeat(
-    subsys: SubsystemHandle,
+    mut shutdown_rx: broadcast::Receiver<()>,
     identity: Identity,
     peer_message_tx: mpsc::Sender<PeerMessage>,
 ) -> anyhow::Result<()> {
+    info!("Peer message heartbeat starting...");
     let mut ticker = tokio::time::interval(Duration::from_secs(10));
 
     loop {
@@ -406,11 +570,13 @@ async fn peer_message_heartbeat(
                     )
                     .await?;
             }
-            _ = subsys.on_shutdown_requested() => {
+            _ = shutdown_rx.recv() => {
+                info!("Peer message heartbeat received shutdown signal");
                 break
             }
         }
     }
 
+    info!("Peer message heartbeat stopped");
     Ok(())
 }

@@ -4,11 +4,11 @@ use iroh::NodeId;
 use maud::{DOCTYPE, Markup, html};
 use poem::{Endpoint, EndpointExt, Route, Server, get, handler, listener::TcpListener, web::Form};
 use serde::Deserialize;
-use tokio_graceful_shutdown::SubsystemHandle;
+use tokio::sync::broadcast;
 use tracing::info;
 
 use crate::{
-    db::data::{Event, EventType, Peer},
+    db::{Event, EventType, Peer},
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
 };
@@ -44,16 +44,16 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                             span style="font-size: 1.5em; margin-right: 8px;" { "🖥️" }
                             div style="flex: 1;" {
                                 div style="font-weight: bold; font-size: 0.9em; color: #333; font-family: monospace;" {
-                                    (peer.node_id.to_string())
+                                    (peer.node_id)
                                 }
                             }
                             div style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e;" {}
                         }
 
-                        @if let Some(last_seen) = &peer.last_seen {
+                        @if let Some(_last_seen) = &peer.last_seen {
                             div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #666;" {
                                 span style="margin-right: 6px;" { "🕒" }
-                                span { "Last seen " (format_relative_time(last_seen)) }
+                                span { "Last seen " (format_relative_time(&peer.get_last_seen_utc().unwrap())) }
                             }
                         } @else {
                             div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #999;" {
@@ -131,22 +131,26 @@ fn tmpl_event_list(events: &Vec<Event>) -> Markup {
                 @for event in events {
                     tr {
                         td style="border: 1px solid #ddd; padding: 8px;" {
-                            (format_relative_time(&event.time))
+                            (format_relative_time(&event.get_time_utc()))
                         }
                         td style="border: 1px solid #ddd; padding: 8px;" {
-                            @match &event.event_type {
-                                EventType::PeerMessage { .. } => {
-                                    span style="background: #e3f2fd; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
-                                        "PeerMessage"
+                            @if let Ok(event_type) = event.get_event_type() {
+                                @match &event_type {
+                                    EventType::PeerMessage { .. } => {
+                                        span style="background: #e3f2fd; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
+                                            "PeerMessage"
+                                        }
                                     }
                                 }
                             }
                         }
                         td style="border: 1px solid #ddd; padding: 8px;" {
-                            @match &event.event_type {
-                                EventType::PeerMessage { message_type } => {
-                                    span style="background: #f3e5f5; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
-                                        (message_type)
+                            @if let Ok(event_type) = event.get_event_type() {
+                                @match &event_type {
+                                    EventType::PeerMessage { message_type } => {
+                                        span style="background: #f3e5f5; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
+                                            (message_type)
+                                        }
                                     }
                                 }
                             }
@@ -156,7 +160,11 @@ fn tmpl_event_list(events: &Vec<Event>) -> Markup {
                         }
                         td style="border: 1px solid #ddd; padding: 8px; font-family: monospace; font-size: 0.8em;" {
                             pre style="margin: 0; white-space: pre-wrap; word-break: break-all;" {
-                                (serde_json::to_string_pretty(&event.data).unwrap_or_else(|_| "Invalid JSON".to_string()))
+                                @if let Ok(data) = event.get_data() {
+                                    (serde_json::to_string_pretty(&data).unwrap_or_else(|_| "Invalid JSON".to_string()))
+                                } @else {
+                                    "Invalid JSON"
+                                }
                             }
                         }
                     }
@@ -230,18 +238,19 @@ pub fn create_app() -> impl Endpoint {
         .with(HtmxErrorMiddleware)
 }
 
-async fn server_subsystem(
-    subsys: SubsystemHandle,
-    app: impl Endpoint + 'static,
-) -> anyhow::Result<()> {
+pub async fn webserver_task(mut shutdown_rx: broadcast::Receiver<()>) -> anyhow::Result<()> {
+    info!("WebServer task starting...");
+
+    let app = create_app();
+
     let result = Server::new(TcpListener::bind("0.0.0.0:3000"))
         .run_with_graceful_shutdown(
             app,
             async {
-                subsys.on_shutdown_requested().await;
+                let _ = shutdown_rx.recv().await;
                 info!("Poem server received shutdown signal");
             },
-            Some(std::time::Duration::from_secs(30)),
+            Some(std::time::Duration::from_secs(5)),
         )
         .await;
 
@@ -250,25 +259,7 @@ async fn server_subsystem(
         Err(e) => tracing::error!("Poem server error: {}", e),
     }
 
-    Ok(())
-}
-
-pub async fn webserver_subsystem(subsys: SubsystemHandle) -> anyhow::Result<()> {
-    info!("WebServer subsystem started");
-
-    let app = create_app();
-
-    // Start the server as a nested subsystem
-    subsys.start(tokio_graceful_shutdown::SubsystemBuilder::new(
-        "poem-server",
-        move |server_subsys| server_subsystem(server_subsys, app),
-    ));
-
-    // Wait for shutdown signal
-    subsys.on_shutdown_requested().await;
-    info!("WebServer subsystem received shutdown signal");
-
-    info!("WebServer subsystem stopped");
+    info!("WebServer task stopped");
     Ok(())
 }
 
@@ -284,10 +275,10 @@ mod tests {
 
     async fn setup_test_db() {
         // For tests, we need to initialize the global database instance
-        // This is a bit tricky since OnceCell can only be initialized once
+        // This is a bit tricky since OnceLock can only be initialized once
         // In a real test setup, you'd want to use a different approach
         // But for now, we'll just ensure the test database is available
-        let _db = crate::db::db().await;
+        let _ = crate::db::init_db().await;
     }
 
     #[tokio::test]

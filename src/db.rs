@@ -1,322 +1,263 @@
 use std::sync::OnceLock;
 
 use anyhow::Result;
-use native_db::{Builder, Database, Models};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use iroh::{NodeId, SecretKey};
+use rand::rngs;
+use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, SqlitePool};
+use tracing::debug;
+use uuid::Uuid;
 
-pub mod data {
-    use native_db::{Key, ToKey, native_db};
-    use native_model::{Model, native_model};
-    use serde::{Deserialize, Serialize};
+// Helper functions for converting between Iroh types and database storage
+fn secret_key_to_hex(key: &SecretKey) -> String {
+    hex::encode(key.to_bytes())
+}
 
-    pub type Identity = v1::Identity;
-    pub type Peer = v1::Peer;
-    pub type EventType = v1::EventType;
-    pub type Event = v1::Event;
+fn secret_key_from_hex(hex_str: &str) -> Result<SecretKey> {
+    let bytes = hex::decode(hex_str)?;
+    let secret_key = SecretKey::try_from(&bytes[..])?;
+    Ok(secret_key)
+}
 
-    pub mod v1 {
-        use super::*;
+fn node_id_to_string(node_id: &NodeId) -> String {
+    node_id.to_string()
+}
 
-        use chrono::Utc;
-        use iroh::{NodeId as OriginalNodeId, PublicKey, SecretKey as OriginalSecretKey};
-        use rand::rngs;
-        use tracing::debug;
+fn node_id_from_string(s: &str) -> Result<NodeId> {
+    Ok(s.parse::<NodeId>()?)
+}
 
-        pub type DateTime = chrono::DateTime<Utc>;
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Identity {
+    pub secret_key: SecretKey,
+}
 
-        #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Clone, Hash)]
-        pub struct Uuid(uuid::Uuid);
+impl Identity {
+    pub fn new() -> Self {
+        debug!("Generating new identity with random secret key");
+        let identity = Self {
+            secret_key: SecretKey::generate(rngs::OsRng),
+        };
+        debug!(public_key = %identity.secret_key.public(), "Generated new identity");
+        identity
+    }
 
-        impl ToKey for Uuid {
-            fn to_key(&self) -> Key {
-                Key::new(self.0.as_bytes().to_vec())
-            }
+    pub fn id(&self) -> NodeId {
+        self.secret_key.public()
+    }
 
-            fn key_names() -> Vec<String> {
-                vec!["Uuid".to_string()]
-            }
-        }
+    pub async fn get_or_create() -> anyhow::Result<Self> {
+        let db = get_db();
 
-        #[derive(Serialize, Deserialize, Debug, Clone)]
-        pub struct SecretKey(OriginalSecretKey);
+        // Try to get existing identity
+        let row = sqlx::query!("SELECT secret_key FROM identities LIMIT 1")
+            .fetch_optional(db)
+            .await?;
 
-        impl ToKey for SecretKey {
-            fn to_key(&self) -> native_db::Key {
-                Key::new(self.0.public().as_bytes().to_vec())
-            }
+        if let Some(row) = row {
+            let secret_key = secret_key_from_hex(&row.secret_key)?;
+            Ok(Self { secret_key })
+        } else {
+            // Create new identity
+            let new_identity = Self::new();
 
-            fn key_names() -> Vec<String> {
-                vec!["SecretKey".to_string()]
-            }
-        }
+            let secret_key_hex = secret_key_to_hex(&new_identity.secret_key);
+            sqlx::query!(
+                "INSERT INTO identities (secret_key) VALUES (?)",
+                secret_key_hex
+            )
+            .execute(db)
+            .await?;
 
-        impl SecretKey {
-            fn generate() -> Self {
-                let og_secret_key = OriginalSecretKey::generate(rngs::OsRng);
-                Self(og_secret_key)
-            }
-
-            pub fn inner(&self) -> &OriginalSecretKey {
-                &self.0
-            }
-
-            pub fn public(&self) -> PublicKey {
-                self.0.public()
-            }
-        }
-
-        #[derive(Serialize, Deserialize, Debug, Clone)]
-        pub struct NodeId(OriginalNodeId);
-
-        impl ToKey for NodeId {
-            fn to_key(&self) -> native_db::Key {
-                Key::new(self.0.as_bytes().to_vec())
-            }
-
-            fn key_names() -> Vec<String> {
-                vec!["NodeId".to_string()]
-            }
-        }
-
-        impl From<OriginalNodeId> for NodeId {
-            fn from(value: OriginalNodeId) -> Self {
-                Self(value)
-            }
-        }
-
-        impl NodeId {
-            pub fn inner(&self) -> OriginalNodeId {
-                self.0
-            }
-        }
-
-        impl std::fmt::Display for NodeId {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                self.0.fmt(f)
-            }
-        }
-
-        impl std::str::FromStr for NodeId {
-            type Err = anyhow::Error;
-
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                Ok(Self(OriginalNodeId::from_str(s)?))
-            }
-        }
-
-        #[derive(Serialize, Deserialize, Debug, Clone)]
-        #[native_model(id = 1, version = 1)]
-        #[native_db]
-        pub struct Identity {
-            #[primary_key]
-            pub secret_key: SecretKey,
-        }
-
-        impl Identity {
-            pub fn new() -> Self {
-                debug!("Generating new identity with random secret key");
-                let identity = Self {
-                    secret_key: SecretKey::generate(),
-                };
-                debug!(public_key = %identity.secret_key.public(), "Generated new identity");
-                identity
-            }
-
-            pub fn id(&self) -> OriginalNodeId {
-                self.secret_key.public().into()
-            }
-
-            pub async fn get_or_create() -> anyhow::Result<Self> {
-                let db = crate::db::get_db();
-                let r = db.r_transaction()?;
-                let mut identities: Vec<Identity> = Vec::new();
-                for item in r.scan().primary()?.all()? {
-                    identities.push(item?);
-                }
-
-                if let Some(identity) = identities.first() {
-                    Ok(identity.clone())
-                } else {
-                    let new_identity = Identity::new();
-                    let rw = db.rw_transaction()?;
-                    rw.insert(new_identity.clone())?;
-                    rw.commit()?;
-                    Ok(new_identity)
-                }
-            }
-        }
-
-        #[derive(Debug, Clone, Serialize, Deserialize)]
-        #[native_model(id = 2, version = 1)]
-        #[native_db]
-        pub struct Peer {
-            #[serde(
-                serialize_with = "serialize_node_id",
-                deserialize_with = "deserialize_node_id"
-            )]
-            #[primary_key]
-            pub node_id: NodeId,
-            pub last_seen: Option<DateTime>,
-            pub hostname: Option<String>,
-        }
-
-        fn serialize_node_id<S>(node_id: &NodeId, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
-        {
-            serializer.serialize_str(&node_id.0.to_string())
-        }
-
-        fn deserialize_node_id<'de, D>(deserializer: D) -> Result<NodeId, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            let s = String::deserialize(deserializer)?;
-            s.parse().map_err(serde::de::Error::custom)
-        }
-
-        impl Peer {
-            pub async fn list() -> anyhow::Result<Vec<Self>> {
-                let db = crate::db::get_db();
-                let r = db.r_transaction()?;
-                let mut peers = Vec::new();
-                for item in r.scan().primary()?.all()? {
-                    peers.push(item?);
-                }
-                Ok(peers)
-            }
-
-            pub async fn create(node_id: OriginalNodeId) -> anyhow::Result<()> {
-                let peer = Self {
-                    node_id: node_id.into(),
-                    last_seen: None,
-                    hostname: None,
-                };
-                let db = crate::db::get_db();
-                let rw = db.rw_transaction()?;
-                rw.insert(peer)?;
-                rw.commit()?;
-                Ok(())
-            }
-
-            pub async fn upsert_peer(
-                node_id: OriginalNodeId,
-                last_seen: Option<DateTime>,
-                hostname: Option<String>,
-            ) -> anyhow::Result<()> {
-                let peer = Self {
-                    node_id: node_id.into(),
-                    last_seen,
-                    hostname,
-                };
-                let db = crate::db::get_db();
-                let rw = db.rw_transaction()?;
-                rw.upsert(peer)?;
-                rw.commit()?;
-                Ok(())
-            }
-
-            pub async fn insert_bootstrap_nodes(nodes: Vec<OriginalNodeId>) -> anyhow::Result<()> {
-                let db = crate::db::get_db();
-                let rw = db.rw_transaction()?;
-                for node_id in nodes {
-                    let peer = Self {
-                        node_id: node_id.into(),
-                        last_seen: None,
-                        hostname: None,
-                    };
-                    rw.insert(peer)?;
-                }
-                rw.commit()?;
-                Ok(())
-            }
-
-            pub async fn list_node_ids() -> anyhow::Result<Vec<OriginalNodeId>> {
-                let db = crate::db::get_db();
-                let r = db.r_transaction()?;
-                let mut peers = Vec::new();
-                for item in r.scan().primary()?.all()? {
-                    let peer: Self = item?;
-                    peers.push(peer.node_id.inner());
-                }
-                Ok(peers)
-            }
-        }
-
-        #[derive(Debug, Clone, Serialize, Deserialize)]
-        pub enum EventType {
-            PeerMessage { message_type: String },
-        }
-
-        #[derive(Debug, Clone, Serialize, Deserialize)]
-        #[native_model(id = 3, version = 1)]
-        #[native_db]
-        pub struct Event {
-            #[primary_key]
-            pub id: Uuid,
-            pub event_type: EventType,
-            pub message: String,
-            pub time: DateTime,
-            pub data: serde_json::Value,
-        }
-
-        impl Event {
-            pub async fn list() -> anyhow::Result<Vec<Self>> {
-                let db = crate::db::get_db();
-                let r = db.r_transaction()?;
-                let mut events = Vec::new();
-                for item in r.scan().primary()?.all()? {
-                    events.push(item?);
-                }
-                Ok(events)
-            }
-
-            pub async fn log(
-                event_type: EventType,
-                message: String,
-                data: Option<serde_json::Value>,
-            ) -> anyhow::Result<()> {
-                let event = Self {
-                    id: Uuid(uuid::Uuid::new_v4()),
-                    event_type,
-                    message,
-                    time: chrono::Utc::now(),
-                    data: data.unwrap_or(serde_json::Value::Null),
-                };
-
-                let db = crate::db::get_db();
-                let rw = db.rw_transaction()?;
-                rw.insert(event)?;
-                rw.commit()?;
-
-                Ok(())
-            }
+            Ok(new_identity)
         }
     }
 }
 
-static MODELS: OnceLock<Models> = OnceLock::new();
-static DATABASE: OnceLock<Database<'static>> = OnceLock::new();
-
-fn get_models() -> &'static Models {
-    MODELS.get_or_init(|| {
-        let mut models = Models::new();
-        models.define::<data::v1::Identity>().unwrap();
-        models.define::<data::v1::Peer>().unwrap();
-        models.define::<data::v1::Event>().unwrap();
-        models
-    })
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Peer {
+    pub node_id: String,                  // NodeId as string
+    pub last_seen: Option<NaiveDateTime>, // SQLite datetime
+    pub hostname: Option<String>,
 }
 
-pub fn init_db() -> Result<()> {
-    let db = Builder::new().create_in_memory(get_models())?;
+impl Peer {
+    pub async fn list() -> anyhow::Result<Vec<Self>> {
+        let db = get_db();
+        let peers = sqlx::query_as!(
+            Peer,
+            "SELECT node_id, last_seen, hostname FROM peers ORDER BY last_seen DESC"
+        )
+        .fetch_all(db)
+        .await?;
+        Ok(peers)
+    }
+
+    pub fn get_last_seen_utc(&self) -> Option<DateTime<Utc>> {
+        self.last_seen
+            .map(|naive| DateTime::from_naive_utc_and_offset(naive, Utc))
+    }
+
+    pub async fn create(node_id: NodeId) -> anyhow::Result<()> {
+        let db = get_db();
+        let node_id_str = node_id_to_string(&node_id);
+        sqlx::query!(
+            "INSERT INTO peers (node_id, last_seen, hostname) VALUES (?, ?, ?)",
+            node_id_str,
+            None::<NaiveDateTime>,
+            None::<String>
+        )
+        .execute(db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_peer(
+        node_id: NodeId,
+        last_seen: Option<DateTime<Utc>>,
+        hostname: Option<String>,
+    ) -> anyhow::Result<()> {
+        let db = get_db();
+        let node_id_str = node_id_to_string(&node_id);
+        let last_seen_naive = last_seen.map(|dt| dt.naive_utc());
+        sqlx::query!(
+            "INSERT INTO peers (node_id, last_seen, hostname) VALUES (?, ?, ?)
+             ON CONFLICT(node_id) DO UPDATE SET
+             last_seen = COALESCE(excluded.last_seen, peers.last_seen),
+             hostname = COALESCE(excluded.hostname, peers.hostname)",
+            node_id_str,
+            last_seen_naive,
+            hostname
+        )
+        .execute(db)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn insert_bootstrap_nodes(nodes: Vec<NodeId>) -> anyhow::Result<()> {
+        let db = get_db();
+        let mut tx = db.begin().await?;
+
+        for node_id in nodes {
+            let node_id_str = node_id_to_string(&node_id);
+            sqlx::query!(
+                "INSERT OR IGNORE INTO peers (node_id, last_seen, hostname) VALUES (?, ?, ?)",
+                node_id_str,
+                None::<NaiveDateTime>,
+                None::<String>
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn list_node_ids() -> anyhow::Result<Vec<NodeId>> {
+        let db = get_db();
+        let rows = sqlx::query!("SELECT node_id FROM peers")
+            .fetch_all(db)
+            .await?;
+
+        let mut node_ids = Vec::new();
+        for row in rows {
+            let node_id = node_id_from_string(&row.node_id)?;
+            node_ids.push(node_id);
+        }
+        Ok(node_ids)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EventType {
+    PeerMessage { message_type: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Event {
+    pub id: String,         // UUID string
+    pub event_type: String, // JSON serialized EventType
+    pub message: String,
+    pub time: NaiveDateTime, // SQLite datetime
+    pub data: String,        // JSON data
+}
+
+impl Event {
+    pub async fn list() -> anyhow::Result<Vec<Self>> {
+        let db = get_db();
+        let events = sqlx::query_as!(
+            Event,
+            "SELECT id, event_type, message, time, data FROM events ORDER BY time DESC LIMIT 100"
+        )
+        .fetch_all(db)
+        .await?;
+        Ok(events)
+    }
+
+    pub async fn log(
+        event_type: EventType,
+        message: String,
+        data: Option<serde_json::Value>,
+    ) -> anyhow::Result<()> {
+        let db = get_db();
+        let event_id = Uuid::new_v4().to_string();
+        let event_type_json = serde_json::to_string(&event_type)?;
+        let data_json = serde_json::to_string(&data.unwrap_or(serde_json::Value::Null))?;
+        let now = Utc::now().naive_utc();
+
+        sqlx::query!(
+            "INSERT INTO events (id, event_type, message, time, data) VALUES (?, ?, ?, ?, ?)",
+            event_id,
+            event_type_json,
+            message,
+            now,
+            data_json
+        )
+        .execute(db)
+        .await?;
+
+        Ok(())
+    }
+
+    // Helper methods to deserialize the stored JSON fields and convert types
+    pub fn get_event_type(&self) -> Result<EventType> {
+        Ok(serde_json::from_str(&self.event_type)?)
+    }
+
+    pub fn get_data(&self) -> Result<serde_json::Value> {
+        Ok(serde_json::from_str(&self.data)?)
+    }
+
+    pub fn get_time_utc(&self) -> DateTime<Utc> {
+        DateTime::from_naive_utc_and_offset(self.time, Utc)
+    }
+}
+
+static DATABASE: OnceLock<SqlitePool> = OnceLock::new();
+
+pub async fn init_db() -> Result<()> {
+    let pool = SqlitePool::connect("sqlite::memory:").await?;
+
+    // Run migrations
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
     DATABASE
-        .set(db)
+        .set(pool)
         .map_err(|_| anyhow::anyhow!("Database already initialized"))?;
     Ok(())
 }
 
-pub fn get_db() -> &'static Database<'static> {
+pub fn get_db() -> &'static SqlitePool {
     DATABASE
         .get()
         .expect("Database not initialized. Call init_db() first.")
+}
+
+pub async fn close_db() -> Result<()> {
+    if let Some(pool) = DATABASE.get() {
+        pool.close().await;
+    }
+    Ok(())
 }

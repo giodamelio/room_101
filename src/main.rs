@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use iroh::NodeId;
-use std::{error::Error, time::Duration};
-use tokio_graceful_shutdown::{SubsystemBuilder, Toplevel};
+use std::time::Duration;
+use tokio::sync::broadcast;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use network::iroh_subsystem;
-use webserver::webserver_subsystem;
+use network::network_manager_task;
+use webserver::webserver_task;
 
 mod db;
 mod error;
@@ -59,7 +59,9 @@ async fn main() -> Result<()> {
     info!("Starting Room 101");
 
     // Initialize the global database
-    db::init_db().context("Failed to initialize database")?;
+    db::init_db()
+        .await
+        .context("Failed to initialize database")?;
 
     // Parse bootstrap node strings into NodeIDs
     let bootstrap_nodes = if args.bootstrap.is_empty() {
@@ -75,51 +77,70 @@ async fn main() -> Result<()> {
         Some(nodes)
     };
 
-    // Capture flag value before closure
-    let start_web = args.start_web;
+    // Create shutdown broadcast channel
+    let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
-    // Create the top level
-    let result = Toplevel::new(move |s| async move {
-        // Only start web server if requested
-        if start_web {
-            s.start(SubsystemBuilder::new("webserver", |subsys| {
-                webserver_subsystem(subsys)
-            }));
-        }
+    info!("Starting tasks...");
+    
+    // Spawn tasks
+    let mut tasks = Vec::new();
 
-        s.start(SubsystemBuilder::new("iroh", {
-            let bootstrap = bootstrap_nodes.clone();
-            move |subsys| iroh_subsystem(subsys, bootstrap)
-        }));
-    })
-    .catch_signals()
-    .handle_shutdown_requests(Duration::from_secs(30))
-    .await;
-
-    match result {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            // Extract more specific error information about subsystem failures
-            let errors = e.get_subsystem_errors();
-            if !errors.is_empty() {
-                let error_details: Vec<String> = errors
-                    .iter()
-                    .map(|subsys_error| {
-                        let error_msg = match subsys_error.source() {
-                            Some(source) => source.to_string(),
-                            None => "Unknown error".to_string(),
-                        };
-                        format!("{}: {}", subsys_error.name(), error_msg)
-                    })
-                    .collect();
-
-                anyhow::bail!(
-                    "Subsystem errors occurred:\n  {}",
-                    error_details.join("\n  ")
-                );
-            } else {
-                anyhow::bail!("Application shutdown with error: {}", e);
+    // Only start web server if requested
+    if args.start_web {
+        info!("Starting webserver task");
+        let shutdown_rx = shutdown_tx.subscribe();
+        tasks.push(tokio::spawn(async move {
+            if let Err(e) = webserver_task(shutdown_rx).await {
+                tracing::error!("Webserver task error: {}", e);
             }
+            info!("Webserver task completed");
+        }));
+    }
+
+    info!("Starting network manager task");
+    let shutdown_rx = shutdown_tx.subscribe();
+    tasks.push(tokio::spawn(async move {
+        if let Err(e) = network_manager_task(shutdown_rx, bootstrap_nodes).await {
+            tracing::error!("Network manager task error: {}", e);
+        }
+        info!("Network manager task completed");
+    }));
+
+    info!("All tasks started, waiting for Ctrl+C...");
+
+    // Wait for Ctrl+C
+    tokio::signal::ctrl_c().await.context("Failed to listen for ctrl-c")?;
+    info!("Received Ctrl+C, initiating shutdown...");
+
+    // Send shutdown signal to all tasks
+    let _ = shutdown_tx.send(());
+
+    // Wait for all tasks to complete with timeout
+    let shutdown_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        futures::future::join_all(tasks)
+    ).await;
+
+    match shutdown_result {
+        Ok(results) => {
+            for result in results {
+                if let Err(e) = result {
+                    tracing::error!("Task panicked: {}", e);
+                }
+            }
+            info!("All tasks completed successfully");
+        }
+        Err(_) => {
+            tracing::warn!("Tasks did not complete within 5 seconds, forcing exit");
         }
     }
+
+    // Clean up database connection
+    info!("Closing database connection...");
+    if let Err(e) = db::close_db().await {
+        tracing::error!("Failed to close database cleanly: {}", e);
+    }
+
+    info!("Application shutdown complete");
+    Ok(())
 }

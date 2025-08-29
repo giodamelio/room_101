@@ -289,6 +289,9 @@
 
               # Mold fast linker
               mold
+
+              # Sqlx
+              sqlx-cli
             ]
             ++
             # All the formatter programs

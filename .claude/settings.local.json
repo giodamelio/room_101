@@ -14,7 +14,10 @@
       "Bash(time cargo build)",
       "mcp__language-server__hover",
       "mcp__language-server__definition",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "Bash(sqlx migrate:*)",
+      "Bash(sqlx database:*)",
+      "mcp__ide__getDiagnostics"
     ]
   },
   "enableAllProjectMcpServers": true,
