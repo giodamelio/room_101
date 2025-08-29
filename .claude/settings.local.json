@@ -21,7 +21,8 @@
       "Bash(devenv tasks run:*)",
       "mcp__language-server__diagnostics",
       "WebFetch(domain:htmx.org)",
-      "Bash(treefmt:*)"
+      "Bash(treefmt:*)",
+      "WebFetch(domain:systemd.io)"
     ]
   },
   "enableAllProjectMcpServers": true,

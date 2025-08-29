@@ -53,6 +53,7 @@ impl<E: Endpoint> Endpoint for HtmxErrorEndpoint<E> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::error::AppError;

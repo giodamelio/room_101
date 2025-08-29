@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO secrets (name, encrypted_data, hash, target_node_id, created_at, updated_at)\n             VALUES (?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "be8f3efa475b76a40fe403fd421f796520d88915eba2524fcaf3957470a29a9c"
+}

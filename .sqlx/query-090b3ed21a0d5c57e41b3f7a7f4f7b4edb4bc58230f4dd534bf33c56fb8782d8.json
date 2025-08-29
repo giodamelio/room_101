@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT node_id, last_seen, hostname, age_public_key FROM peers WHERE node_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "node_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_seen",
+        "ordinal": 1,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "hostname",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "age_public_key",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "090b3ed21a0d5c57e41b3f7a7f4f7b4edb4bc58230f4dd534bf33c56fb8782d8"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM secrets WHERE name = ? AND hash = ? AND target_node_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "85a325eab564f68e47ec16614c4c1eb9269303bf0e0fa634d1059e2c8a132aa0"
+}

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 use std::io::{Read as StdRead, Write as StdWrite};
-use tracing::debug;
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 // Helper functions for converting between Iroh types and database storage
@@ -73,6 +73,7 @@ mod age_identity_serde {
     }
 
     #[cfg(test)]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
     mod tests {
         use super::*;
 
@@ -568,14 +569,48 @@ impl Secret {
         )
         .await?;
 
-        Ok(Self {
-            name,
-            encrypted_data,
-            hash,
-            target_node_id: target_node_id_str,
+        let secret = Self {
+            name: name.clone(),
+            encrypted_data: encrypted_data.clone(),
+            hash: hash.clone(),
+            target_node_id: target_node_id_str.clone(),
             created_at: now,
             updated_at: now,
-        })
+        };
+
+        // If this secret is for the current node, write it to systemd
+        if let Ok(identity) = Identity::get_or_create().await {
+            if target_node_id == identity.id() {
+                tracing::debug!("Secret '{}' is for current node, syncing to systemd", name);
+                let config = crate::get_systemd_secrets_config();
+                let cred_path = format!("{}/{}.cred", config.path, name);
+                tracing::debug!(
+                    "Writing secret '{}' to systemd at path: {}",
+                    name,
+                    cred_path
+                );
+                if let Err(e) = crate::systemd_secrets::write_secret(
+                    &name,
+                    secret_content,
+                    &cred_path,
+                    config.user_scope,
+                )
+                .await
+                {
+                    tracing::error!("Failed to write secret '{}' to systemd: {}", name, e);
+                } else {
+                    tracing::info!("Successfully synced secret '{}' to systemd", name);
+                }
+            } else {
+                tracing::debug!(
+                    "Secret '{}' is not for current node (target: {}), skipping systemd sync",
+                    name,
+                    target_node_id
+                );
+            }
+        }
+
+        Ok(secret)
     }
 
     pub async fn upsert(
@@ -642,6 +677,93 @@ impl Secret {
             .into(),
         )
         .await?;
+
+        // If this secret is for the current node, write it to systemd
+        match Identity::get_or_create().await {
+            Ok(identity) => {
+                let current_node_id = identity.id();
+                debug!(
+                    "Secret '{}' systemd sync check: current_node={}, target_node={}, match={}",
+                    name,
+                    current_node_id,
+                    target_node_id,
+                    target_node_id == current_node_id
+                );
+
+                if target_node_id == current_node_id {
+                    info!(
+                        "Secret '{}' is for current node {}, proceeding with systemd sync",
+                        name, current_node_id
+                    );
+
+                    // We need to decrypt the secret content to write to systemd
+                    debug!(
+                        "Attempting to decrypt secret '{}' (encrypted_data_len={})",
+                        name,
+                        encrypted_data.len()
+                    );
+                    match decrypt_secret_for_identity(&encrypted_data, &identity).await {
+                        Ok(decrypted_content) => {
+                            info!(
+                                "Successfully decrypted secret '{}' (content_len={})",
+                                name,
+                                decrypted_content.len()
+                            );
+
+                            let config = crate::get_systemd_secrets_config();
+                            let cred_path = format!("{}/{}.cred", config.path, name);
+
+                            info!(
+                                "SystemD config: path='{}', user_scope={}, cred_path='{}'",
+                                config.path, config.user_scope, cred_path
+                            );
+
+                            debug!("Calling systemd_secrets::write_secret for '{}'", name);
+                            match crate::systemd_secrets::write_secret(
+                                &name,
+                                &decrypted_content,
+                                &cred_path,
+                                config.user_scope,
+                            )
+                            .await
+                            {
+                                Ok(()) => {
+                                    info!(
+                                        "✅ Successfully synced secret '{}' to systemd at path: {}",
+                                        name, cred_path
+                                    );
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "❌ Failed to write secret '{}' to systemd at path '{}': {}",
+                                        name, cred_path, e
+                                    );
+                                    error!("SystemD error details: {:?}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "❌ Failed to decrypt secret '{}' for systemd sync: {}",
+                                name, e
+                            );
+                            error!("Decryption error details: {:?}", e);
+                        }
+                    }
+                } else {
+                    debug!(
+                        "Secret '{}' is not for current node (current: {}, target: {}), skipping systemd sync",
+                        name, current_node_id, target_node_id
+                    );
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to get identity for systemd sync of secret '{}': {}",
+                    name, e
+                );
+            }
+        }
 
         Ok(true)
     }
@@ -737,7 +859,25 @@ impl Secret {
         .await?
         .rows_affected();
 
-        Ok(rows_affected > 0)
+        let was_deleted = rows_affected > 0;
+
+        // If this secret was for the current node, remove it from systemd
+        if was_deleted {
+            if let Ok(identity) = Identity::get_or_create().await {
+                if target_node_id == identity.id() {
+                    let config = crate::get_systemd_secrets_config();
+                    let cred_path = format!("{}/{}.cred", config.path, name);
+                    if let Err(e) =
+                        crate::systemd_secrets::delete_secret(name, &cred_path, config.user_scope)
+                            .await
+                    {
+                        tracing::warn!("Failed to delete secret '{}' from systemd: {}", name, e);
+                    }
+                }
+            }
+        }
+
+        Ok(was_deleted)
     }
 }
 

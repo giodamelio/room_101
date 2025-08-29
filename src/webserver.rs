@@ -3,8 +3,8 @@ use chrono_humanize::HumanTime;
 use iroh::NodeId;
 use maud::{DOCTYPE, Markup, html};
 use poem::{
-    Body, Endpoint, EndpointExt, Route, Server, get, handler, listener::TcpListener, web::Data,
-    web::Form, web::Query,
+    Body, Endpoint, EndpointExt, IntoResponse, Route, Server, get, handler, listener::TcpListener,
+    post, web::Data, web::Form, web::Path, web::Query, web::Redirect,
 };
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
@@ -1573,6 +1573,18 @@ fn tmpl_peer_detail(peer: &Peer, secrets: Vec<GroupedSecret>, current_node_id: N
             }
         }
 
+        div style="margin: 20px 0;" {
+            form method="POST" action=(format!("/peers/{}/sync-secrets", peer.node_id)) style="display: inline;" {
+                button type="submit" style="background: #059669; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;" {
+                    @if is_current_node {
+                        "🔄 Sync Your Secrets to SystemD"
+                    } @else {
+                        "🔄 Request SystemD Sync"
+                    }
+                }
+            }
+        }
+
         h2 style="margin: 24px 0 16px 0;" {
             @if is_current_node {
                 "Your Secrets"
@@ -1641,11 +1653,48 @@ async fn get_peer_detail(poem::web::Path(node_id): poem::web::Path<String>) -> R
     Ok(tmpl_peer_detail(&peer, grouped_secrets, identity.id()))
 }
 
+#[handler]
+async fn sync_peer_secrets(
+    Path(node_id): Path<String>,
+    Data(peer_message_tx): Data<&mpsc::Sender<PeerMessage>>,
+) -> Result<impl IntoResponse> {
+    use crate::network::{send_secret_sync_request, sync_all_secrets_to_systemd};
+
+    // Parse the node ID
+    let target_node_id: NodeId = node_id
+        .parse()
+        .map_err(|e| AppError::BadRequest(format!("Invalid node ID: {}", e)))?;
+
+    // Get current identity to check if this is a self-sync
+    let identity = get_current_identity().await?;
+    let current_node_id = identity.id();
+
+    if target_node_id == current_node_id {
+        debug!("Syncing secrets to systemd for current node (direct call)");
+        // For current node, sync directly to systemd
+        sync_all_secrets_to_systemd()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to sync secrets to systemd: {}", e)))?;
+        debug!("Successfully synced current node secrets to systemd");
+    } else {
+        debug!("Sending sync request to remote node {}", target_node_id);
+        // For remote nodes, send sync request message
+        send_secret_sync_request(target_node_id, peer_message_tx.clone())
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        debug!("Successfully sent sync request to remote node");
+    }
+
+    // Redirect back to the peer detail page
+    Ok(Redirect::temporary(format!("/peers/{}", node_id)))
+}
+
 pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
     Route::new()
         .at("/", get(index))
         .at("/peers", get(list_peers).post(create_peer))
         .at("/peers/:node_id", get(get_peer_detail))
+        .at("/peers/:node_id/sync-secrets", post(sync_peer_secrets))
         .at("/events", get(list_events))
         .at("/secrets", get(list_secrets).post(create_secret))
         .at("/secrets/new", get(add_secret_form))
@@ -1664,12 +1713,15 @@ pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
 pub async fn webserver_task(
     mut shutdown_rx: broadcast::Receiver<()>,
     peer_message_tx: mpsc::Sender<PeerMessage>,
+    port: u16,
 ) -> anyhow::Result<()> {
-    debug!("WebServer task starting...");
+    debug!("WebServer task starting on port {}...", port);
 
     let app = create_app(peer_message_tx);
 
-    let result = Server::new(TcpListener::bind("0.0.0.0:3000"))
+    let bind_addr = format!("0.0.0.0:{}", port);
+    debug!("Binding webserver to {}", bind_addr);
+    let result = Server::new(TcpListener::bind(&bind_addr))
         .run_with_graceful_shutdown(
             app,
             async {
@@ -1690,6 +1742,7 @@ pub async fn webserver_task(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use poem::test::TestClient;

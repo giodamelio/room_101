@@ -60,8 +60,15 @@ This project uses devenv.nix for reproducible development environments with:
 - Pre-commit hooks for code formatting (treefmt), linting (clippy), and SQLx metadata generation
 - Task automation for database operations
 
-## Project Planning
-- Check `TODO.md` for current feature roadmap and implementation status
+## Project Planning and Task Management
+- **Primary Source of Truth**: `TODO.md` contains all current tasks, architectural plans, and implementation details
+- **Context Persistence**: Due to chat context limitations, always update TODO.md when:
+  - Starting work on new features or refactors
+  - Completing tasks or milestones
+  - Discovering issues or blockers
+  - Planning multi-phase implementations
+- **Major Refactor in Progress**: The application is currently being refactored to use a task-based broadcast architecture with tokio::sync::broadcast channels - see TODO.md for complete details
+- **Task Organization**: TODO.md uses nested hierarchical structure with detailed implementation notes, code examples, and migration strategies
 - This application focuses on cryptographic secrets management in a P2P network
 
 ## Testing
@@ -69,5 +76,25 @@ This project uses devenv.nix for reproducible development environments with:
 - Tests automatically run via `enterTest` in devenv configuration
 
 ## Rust Development Workflow
-- Call `cargo check` before finishing any task where you modified Rust source files.
-- Use inlined format arguments in `format!()` macros (e.g., `format!("Hello {name}")` instead of `format!("Hello {}", name)`) to pass clippy linting.
+- **Frequent Checking**: Run `cargo check` and `cargo clippy` often during development, not just at the end
+- **Before Task Completion**: Always call `cargo check` before finishing any task where you modified Rust source files
+- **Clippy Compliance**: Use inlined format arguments in `format!()` macros (e.g., `format!("Hello {name}")` instead of `format!("Hello {}", name)`) to pass clippy linting
+- **Git Commits**: Proactively suggest making git commits when completing logical units of work or reaching stable milestones
+- **Clean Logging**: Never use emoji in log messages. Keep logging output clean and professional for production systems
+
+## Code Quality Guidelines
+- **Simplicity First**: Write simple, readable code. Using `.clone()` is perfectly acceptable until performance becomes an issue.
+- **Proper Error Handling**: Use proper error handling everywhere. Never use `.expect()` or `.unwrap()` in production code - only in tests where panics are acceptable.
+- **Error Types**: Use `anyhow::Result<T>` for functions that return errors. Use `anyhow::Context` to add context to error chains.
+- **Custom Errors**: Use `thiserror` derive macro to create custom error enums when you need structured error types.
+- **Error Propagation**: Use the `?` operator for error propagation. Prefer `anyhow::bail!()` and `anyhow::ensure!()` for early returns with errors.
+- **Error Context**: Always add meaningful context when errors bubble up using `.context()` or `.with_context()`.
+
+## Logging Guidelines
+- **Info Level**: Keep info logs minimal and quiet - only for important application events (startup, shutdown, major state changes)
+- **Debug Level**: Add solid debug logging for debugging application flow and important operations
+- **Trace Level**: Add extensive trace logging for detailed execution flow, message handling, and low-level operations
+- **ABSOLUTELY NO EMOJIS**: Never use emojis in log messages - keep output clean and professional for production systems
+- **Professional Output**: Log messages must be professional, clean, and machine-readable
+- **Structured Data**: Include relevant context like node_ids, message types, timestamps in log messages
+- **Use Proper Logging**: Never use `println!` or `print!` - always use tracing macros (info!, debug!, trace!, error!, warn!)

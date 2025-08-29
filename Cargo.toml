@@ -3,6 +3,13 @@ name = "room_101"
 version = "0.1.0"
 edition = "2024"
 
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+# Deny print statements - use proper logging instead
+print_stdout = "deny"
+print_stderr = "deny"
+
 
 [dependencies]
 iroh = "0.91.1"

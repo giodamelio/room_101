@@ -30,6 +30,8 @@ in {
       claude-code
       sqlx-cli
       cargo-nextest
+      sqlite
+      litecli
 
       # Treefmt stuff
       treefmt.wrapper

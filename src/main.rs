@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use iroh::NodeId;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
@@ -13,9 +14,24 @@ mod db;
 mod error;
 mod middleware;
 mod network;
+mod systemd_secrets;
 mod utils;
 mod web_components;
 mod webserver;
+
+#[derive(Debug, Clone)]
+pub struct SystemdSecretsConfig {
+    pub path: String,
+    pub user_scope: bool,
+}
+
+static SYSTEMD_SECRETS_CONFIG: OnceLock<SystemdSecretsConfig> = OnceLock::new();
+
+pub fn get_systemd_secrets_config() -> &'static SystemdSecretsConfig {
+    SYSTEMD_SECRETS_CONFIG
+        .get()
+        .expect("SystemdSecretsConfig not initialized")
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "room_101")]
@@ -28,9 +44,21 @@ struct Args {
     #[arg(long)]
     start_web: bool,
 
+    /// Web server port (default: 3000)
+    #[arg(long, default_value = "3000")]
+    port: u16,
+
     /// Path to SQLite database file
     #[arg(long)]
     db_path: String,
+
+    /// Directory to store systemd credentials (default: /var/lib/credstore)
+    #[arg(long, default_value = "/var/lib/credstore")]
+    systemd_secrets_path: String,
+
+    /// Use user-scope systemd credentials instead of system-scope (default: system-scope)
+    #[arg(long)]
+    systemd_user_scope: bool,
 }
 
 /// Initialize simple tracing-based logging to stdout
@@ -68,6 +96,26 @@ async fn main() -> Result<()> {
         anyhow::bail!("In-memory database not allowed in production. Use a file path instead.");
     }
 
+    // Initialize systemd secrets configuration
+    SYSTEMD_SECRETS_CONFIG
+        .set(SystemdSecretsConfig {
+            path: args.systemd_secrets_path.clone(),
+            user_scope: args.systemd_user_scope,
+        })
+        .map_err(|_| anyhow::anyhow!("Failed to initialize SystemdSecretsConfig"))?;
+
+    // Check systemd-creds availability at startup
+    info!(
+        "SystemD secrets config: path='{}', user_scope={}",
+        args.systemd_secrets_path, args.systemd_user_scope
+    );
+    if systemd_secrets::is_available() {
+        info!("✅ systemd-creds is available - systemd secrets integration enabled");
+    } else {
+        warn!("⚠️ systemd-creds is NOT available - systemd secrets integration disabled");
+        warn!("To enable systemd secrets, install systemd-creds (usually part of systemd >= 248)");
+    }
+
     // Initialize the global database
     db::init_db(&args.db_path)
         .await
@@ -94,29 +142,30 @@ async fn main() -> Result<()> {
     let mut tasks = Vec::new();
 
     // Create shared message channel for webserver integration if web server is enabled
-    let peer_message_tx = if args.start_web {
+    let (_peer_message_tx, webserver_rx) = if args.start_web {
         debug!("Creating shared peer message channel for webserver integration");
-        let (tx, _) = tokio::sync::mpsc::channel::<network::PeerMessage>(100);
+        let (tx, rx) = tokio::sync::mpsc::channel::<network::PeerMessage>(100);
 
-        debug!("Starting webserver task");
+        debug!("Starting webserver task on port {}", args.port);
         let shutdown_rx = shutdown_tx.subscribe();
         let webserver_tx = tx.clone();
+        let webserver_port = args.port;
         tasks.push(tokio::spawn(async move {
-            if let Err(e) = webserver_task(shutdown_rx, webserver_tx).await {
+            if let Err(e) = webserver_task(shutdown_rx, webserver_tx, webserver_port).await {
                 error!("Webserver task error: {}", e);
             }
             debug!("Webserver task completed");
         }));
 
-        Some(tx)
+        (Some(tx), Some(rx))
     } else {
-        None
+        (None, None)
     };
 
     debug!("Starting network manager task");
     let shutdown_rx = shutdown_tx.subscribe();
     tasks.push(tokio::spawn(async move {
-        if let Err(e) = network_manager_task(shutdown_rx, bootstrap_nodes, peer_message_tx).await {
+        if let Err(e) = network_manager_task(shutdown_rx, bootstrap_nodes, webserver_rx).await {
             error!("Network manager task error: {}", e);
         }
         debug!("Network manager task completed");

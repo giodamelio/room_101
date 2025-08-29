@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n                name,\n                hash,\n                GROUP_CONCAT(target_node_id) as \"target_node_ids!\",\n                encrypted_data,\n                MIN(created_at) as created_at,\n                MAX(updated_at) as updated_at\n             FROM secrets\n             GROUP BY name, hash\n             ORDER BY MAX(updated_at) DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "hash",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "target_node_ids!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "encrypted_data",
+        "ordinal": 3,
+        "type_info": "Blob"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 5,
+        "type_info": "Datetime"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "7e634f6d6e9cd574953faeedb388ab9b097b446dc7a8570aa6979fda0125b227"
+}

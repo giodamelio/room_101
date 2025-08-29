@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::select;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::db::{Event, EventType, Identity, Peer, Secret, age_public_key_to_string};
 use crate::utils::topic_id;
@@ -85,6 +85,7 @@ pub enum PeerMessage {
     Heartbeat {
         node_id: NodeId,
         time: DateTime<Utc>,
+        age_public_key: String,
     },
     #[serde(rename = "SECRET")]
     Secret {
@@ -101,6 +102,11 @@ pub enum PeerMessage {
         target_node_id: NodeId,
         time: DateTime<Utc>,
     },
+    #[serde(rename = "SECRET_SYNC_REQUEST")]
+    SecretSyncRequest {
+        node_id: NodeId,
+        time: DateTime<Utc>,
+    },
 }
 
 impl Display for PeerMessage {
@@ -112,6 +118,7 @@ impl Display for PeerMessage {
             PeerMessage::Heartbeat { .. } => f.write_str("HEARTBEAT"),
             PeerMessage::Secret { .. } => f.write_str("SECRET"),
             PeerMessage::SecretDelete { .. } => f.write_str("SECRET_DELETE"),
+            PeerMessage::SecretSyncRequest { .. } => f.write_str("SECRET_SYNC_REQUEST"),
         }
     }
 }
@@ -174,6 +181,10 @@ async fn send_all_secrets_to_node(
 ) -> Result<()> {
     let all_secrets = Secret::list_all().await?;
     let secrets_count = all_secrets.len();
+    info!(
+        "📤 Sending {} secrets to newly connected node {}",
+        secrets_count, target_node_id
+    );
 
     for secret in all_secrets {
         let secret_message = PeerMessage::Secret {
@@ -241,11 +252,105 @@ pub async fn announce_secret(
     )
     .await?;
 
-    send_peer_message(peer_message_tx, secret_message).await?;
-    debug!(
-        "Announced secret '{}' for node {}",
+    info!(
+        "📢 Announcing secret '{}' for node {} to network",
         secret.name, secret.target_node_id
     );
+    send_peer_message(peer_message_tx, secret_message).await?;
+    info!(
+        "✅ Successfully announced secret '{}' for node {} to network",
+        secret.name, secret.target_node_id
+    );
+    Ok(())
+}
+
+pub async fn sync_all_secrets_to_systemd() -> Result<()> {
+    use crate::db::{Identity, Secret, decrypt_secret_for_identity};
+
+    let identity = Identity::get_or_create().await?;
+    let current_node_id = identity.id();
+
+    // Get all secrets for the current node
+    let all_secrets = Secret::list_all().await?;
+    let my_secrets: Vec<_> = all_secrets
+        .into_iter()
+        .filter(|secret| {
+            secret
+                .get_target_node_id()
+                .map(|id| id == current_node_id)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    debug!(
+        "Syncing {} secrets to systemd for current node",
+        my_secrets.len()
+    );
+
+    let config = crate::get_systemd_secrets_config();
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    for secret in my_secrets {
+        match decrypt_secret_for_identity(&secret.encrypted_data, &identity).await {
+            Ok(decrypted_content) => {
+                let cred_path = format!("{}/{}.cred", config.path, secret.name);
+                match crate::systemd_secrets::write_secret(
+                    &secret.name,
+                    &decrypted_content,
+                    &cred_path,
+                    config.user_scope,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        debug!("Synced secret '{}' to systemd", secret.name);
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        error!("Failed to sync secret '{}' to systemd: {}", secret.name, e);
+                        error_count += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to decrypt secret '{}' for systemd sync: {}",
+                    secret.name, e
+                );
+                error_count += 1;
+            }
+        }
+    }
+
+    info!(
+        "Systemd sync complete: {} success, {} errors",
+        success_count, error_count
+    );
+    Ok(())
+}
+
+pub async fn send_secret_sync_request(
+    target_node_id: NodeId,
+    peer_message_tx: mpsc::Sender<PeerMessage>,
+) -> Result<()> {
+    let sync_request = PeerMessage::SecretSyncRequest {
+        node_id: target_node_id,
+        time: Utc::now(),
+    };
+
+    // Log sync request event
+    Event::log(
+        EventType::PeerMessage {
+            message_type: "SECRET_SYNC_REQUEST".to_string(),
+        },
+        format!("Sending secret sync request to node {}", target_node_id),
+        serde_json::to_value(&sync_request).ok(),
+    )
+    .await?;
+
+    send_peer_message(peer_message_tx, sync_request).await?;
+    debug!("Sent secret sync request to node {}", target_node_id);
     Ok(())
 }
 
@@ -283,16 +388,22 @@ pub async fn announce_secret_deletion(
 pub async fn network_manager_task(
     shutdown_rx: broadcast::Receiver<()>,
     bootstrap_nodes: Option<Vec<NodeId>>,
-    external_peer_message_tx: Option<mpsc::Sender<PeerMessage>>,
+    external_peer_message_rx: Option<mpsc::Receiver<PeerMessage>>,
 ) -> Result<()> {
     debug!("Network manager starting...");
 
     // Add bootstrap nodes to database if provided
     if let Some(nodes) = bootstrap_nodes {
-        info!("Adding {} bootstrap nodes to database", nodes.len());
+        info!("🚀 Adding {} bootstrap nodes to database", nodes.len());
+        for node in &nodes {
+            info!("  - Bootstrap node: {}", node);
+        }
         Peer::insert_bootstrap_nodes(nodes)
             .await
             .context("Failed to add bootstrap nodes to database")?;
+        info!("✅ Bootstrap nodes added to database");
+    } else {
+        info!("ℹ️ No bootstrap nodes provided - starting in isolated mode");
     }
 
     // Get our identity from the db if it exists, otherwise generate one
@@ -338,14 +449,15 @@ pub async fn network_manager_task(
     let (heartbeat_sender_gossip_tx, heartbeat_sender_gossip_rx) =
         tokio::sync::oneshot::channel::<iroh_gossip::api::GossipSender>();
 
-    // Create separate channels for message passing
-    // Use external channel if provided (for webserver integration), otherwise create internal ones
-    let (listener_tx, listener_rx) = if let Some(ext_tx) = external_peer_message_tx {
-        (ext_tx, {
-            let (_, rx) = tokio::sync::mpsc::channel::<PeerMessage>(1);
-            rx
-        })
+    // Create channels for message passing
+    // Use external receiver if provided (from webserver), otherwise create internal channels
+    let (listener_tx, listener_rx) = if let Some(ext_rx) = external_peer_message_rx {
+        // When webserver is enabled, we listen to messages from the webserver
+        // but still need our own sender for internal network messages
+        let (internal_tx, _) = tokio::sync::mpsc::channel::<PeerMessage>(1); // dummy internal channel
+        (internal_tx, ext_rx)
     } else {
+        // No webserver, use internal channels for everything
         tokio::sync::mpsc::channel::<PeerMessage>(100)
     };
     let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel::<PeerMessage>(100);
@@ -490,16 +602,27 @@ async fn gossip_setup_task(
     // Get known peers for gossip (let Iroh discover addressing via relay/DHT)
     let all_peer_ids = Peer::list_node_ids().await?;
     let peers: Vec<NodeId> = all_peer_ids
-        .into_iter()
-        .filter(|&peer_id| peer_id != identity.id()) // Don't include ourself
+        .iter()
+        .filter(|&peer_id| *peer_id != identity.id()) // Don't include ourself
+        .cloned()
         .collect();
 
-    debug!("Known peers for gossip discovery: {:?}", peers);
+    info!(
+        "🔍 Peer discovery: found {} peers in database",
+        all_peer_ids.len()
+    );
+    for peer_id in &all_peer_ids {
+        if *peer_id == identity.id() {
+            info!("  - {} (this node)", peer_id);
+        } else {
+            info!("  - {} (remote)", peer_id);
+        }
+    }
 
-    // Subscribe to the peers topic with shutdown awareness
-    debug!(
-        "Subscribing to gossip topic with {} known peers",
-        peers.len()
+    let peer_count = peers.len();
+    info!(
+        "🌐 Subscribing to gossip topic with {} remote peers for bootstrap",
+        peer_count
     );
     let gossip_result = select! {
         result = gossip.subscribe_and_join(PEER_TOPIC, peers) => {
@@ -512,7 +635,10 @@ async fn gossip_setup_task(
     };
 
     let (peer_sender, peer_reciever) = gossip_result?.split();
-    debug!("Successfully subscribed to gossip topic");
+    info!(
+        "✅ Successfully subscribed to gossip topic and connected to {} peers",
+        peer_count
+    );
 
     // Send gossip handles to other tasks
     let _ = listener_gossip_tx.send(peer_reciever);
@@ -520,6 +646,10 @@ async fn gossip_setup_task(
     let _ = heartbeat_sender_gossip_tx.send(peer_sender);
 
     // Send our welcome message
+    info!(
+        "📢 Broadcasting JOIN message to network as node {}",
+        identity.id()
+    );
     send_peer_message(
         listener_tx.clone(),
         PeerMessage::Joined {
@@ -608,13 +738,13 @@ async fn peer_message_listener_task(
                         debug!("Failed to upsert peer {node_id} to database: {e}");
                     }
 
-                    // Send an introduction to the network
+                    // Send our introduction to the network so the new peer gets our age key
                     send_peer_message(
                         peer_message_tx.clone(),
                         PeerMessage::Introduction {
                             node_id: identity.id(),
                             time: Utc::now(),
-                            hostname,
+                            hostname: get_hostname(),
                             age_public_key: age_public_key_to_string(&identity.age_key),
                         },
                     )
@@ -633,11 +763,11 @@ async fn peer_message_listener_task(
                         debug!("Failed to update peer {node_id} last_seen time: {e}");
                     }
                 }
-                PeerMessage::Heartbeat { node_id, time } => {
+                PeerMessage::Heartbeat { node_id, time, age_public_key } => {
                     trace!(%node_id, %time, "Handling PeerMessage::Heartbeat");
 
-                    // Update last_seen time on heartbeat
-                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), None, None).await {
+                    // Update last_seen time and age key on heartbeat
+                    if let Err(e) = Peer::upsert_peer(node_id, Some(time), None, Some(age_public_key)).await {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }
@@ -664,8 +794,10 @@ async fn peer_message_listener_task(
                     }
 
                     // Send all secrets to the newly introduced node
-                    if let Err(e) = send_all_secrets_to_node(*node_id, peer_message_tx.clone()).await {
-                        debug!("Failed to send secrets to new node {node_id}: {e}");
+                    info!("🤝 New peer {} introduced, sending all secrets", node_id);
+                    match send_all_secrets_to_node(*node_id, peer_message_tx.clone()).await {
+                        Ok(()) => info!("✅ Successfully sent all secrets to new node {}", node_id),
+                        Err(e) => error!("❌ Failed to send secrets to new node {}: {}", node_id, e),
                     }
                 }
                 PeerMessage::Secret {
@@ -675,10 +807,12 @@ async fn peer_message_listener_task(
                     ref target_node_id,
                     ref time,
                 } => {
-                    trace!(%name, %target_node_id, %hash, %time, "Handling PeerMessage::Secret");
+                    debug!(%name, %target_node_id, %hash, %time, encrypted_data_len = encrypted_data.len(),
+                           current_node = %identity.id(), "Handling PeerMessage::Secret");
 
                     // Only process secrets that are meant for us
                     if *target_node_id == identity.id() {
+                        debug!("Secret '{}' is for current node, proceeding with upsert and systemd sync", name);
                         // Use upsert to handle hash-based deduplication
                         match Secret::upsert(
                             name.clone(),
@@ -688,7 +822,7 @@ async fn peer_message_listener_task(
                         ).await {
                             Ok(was_updated) => {
                                 if was_updated {
-                                    debug!("Updated secret '{}' from peer", name);
+                                    info!("Successfully updated secret '{}' from peer with systemd sync", name);
                                     Event::log(
                                         EventType::PeerMessage {
                                             message_type: message.to_string(),
@@ -698,14 +832,15 @@ async fn peer_message_listener_task(
                                     )
                                     .await?;
                                 } else {
-                                    trace!("Secret '{}' already up to date (same hash)", name);
+                                    debug!("Secret '{}' already up to date (same hash), no systemd sync needed", name);
                                 }
                             }
                             Err(e) => {
-                                debug!("Failed to store secret '{}': {}", name, e);
+                                error!("Failed to store secret '{}' for current node: {}", name, e);
                             }
                         }
                     } else {
+                        debug!("Secret '{}' is for node {} (not current node), storing for gossip distribution", name, target_node_id);
                         // Store secrets for other nodes too (for gossip distribution)
                         match Secret::upsert(
                             name.clone(),
@@ -715,11 +850,11 @@ async fn peer_message_listener_task(
                         ).await {
                             Ok(was_updated) => {
                                 if was_updated {
-                                    trace!("Stored secret '{}' for node {}", name, target_node_id);
+                                    debug!("Stored secret '{}' for node {}", name, target_node_id);
                                 }
                             }
                             Err(e) => {
-                                trace!("Failed to store secret '{}' for node {}: {}", name, target_node_id, e);
+                                warn!("Failed to store secret '{}' for node {}: {}", name, target_node_id, e);
                             }
                         }
                     }
@@ -760,8 +895,33 @@ async fn peer_message_listener_task(
                         }
                     }
                 }
+                PeerMessage::SecretSyncRequest {
+                    ref node_id,
+                    ref time,
+                } => {
+                    trace!(%node_id, %time, "Handling PeerMessage::SecretSyncRequest");
+
+                    // Only process sync requests meant for us
+                    if *node_id == identity.id() {
+                        debug!("Received secret sync request, syncing all secrets to systemd");
+                        if let Err(e) = sync_all_secrets_to_systemd().await {
+                            error!("Failed to sync secrets to systemd: {}", e);
+                        }
+
+                        Event::log(
+                            EventType::PeerMessage {
+                                message_type: message.to_string(),
+                            },
+                            format!("Processed secret sync request from {}", _from),
+                            serde_json::to_value(message.clone()).ok(),
+                        )
+                        .await?;
+                    } else {
+                        trace!("Ignoring sync request for different node: {}", node_id);
                     }
                 }
+            }
+        }
             }
             _ = shutdown_rx.recv() => {
                 debug!("Peer message listener received shutdown signal");
@@ -833,6 +993,7 @@ async fn peer_message_heartbeat(
                     PeerMessage::Heartbeat {
                         node_id: identity.id(),
                         time: Utc::now(),
+                        age_public_key: age_public_key_to_string(&identity.age_key),
                     }
                     )
                     .await?;

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT name, encrypted_data, hash, target_node_id, created_at, updated_at\n             FROM secrets ORDER BY updated_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "encrypted_data",
+        "ordinal": 1,
+        "type_info": "Blob"
+      },
+      {
+        "name": "hash",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "target_node_id",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 5,
+        "type_info": "Datetime"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f08dd179983ed9a20e53b6d5fa96b292730452b4e6e278d501ec24dbfd826932"
+}
