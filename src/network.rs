@@ -5,15 +5,15 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ed25519_dalek::Signature;
+use futures::TryStreamExt;
 use iroh::{Endpoint, NodeId, Watcher, protocol::Router};
 use iroh::{PublicKey, SecretKey};
 use iroh_gossip::{ALPN, net::Gossip, proto::TopicId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::select;
-use tokio::sync::mpsc;
 use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
-use futures::TryStreamExt;
 
 use crate::db::{Event, EventType, Identity, Peer};
 use crate::utils::topic_id;
@@ -122,8 +122,9 @@ async fn send_peer_message(
                 // For full channel, still try the blocking send with timeout
                 tokio::time::timeout(
                     std::time::Duration::from_millis(100),
-                    peer_message_tx.send(message.clone())
-                ).await??;
+                    peer_message_tx.send(message.clone()),
+                )
+                .await??;
             }
         }
     }
@@ -198,10 +199,13 @@ pub async fn network_manager_task(
         .spawn();
 
     // Create oneshot channels for coordinating gossip handles
-    let (listener_gossip_tx, listener_gossip_rx) = tokio::sync::oneshot::channel::<iroh_gossip::api::GossipReceiver>();
-    let (sender_gossip_tx, sender_gossip_rx) = tokio::sync::oneshot::channel::<iroh_gossip::api::GossipSender>();
-    let (heartbeat_sender_gossip_tx, heartbeat_sender_gossip_rx) = tokio::sync::oneshot::channel::<iroh_gossip::api::GossipSender>();
-    
+    let (listener_gossip_tx, listener_gossip_rx) =
+        tokio::sync::oneshot::channel::<iroh_gossip::api::GossipReceiver>();
+    let (sender_gossip_tx, sender_gossip_rx) =
+        tokio::sync::oneshot::channel::<iroh_gossip::api::GossipSender>();
+    let (heartbeat_sender_gossip_tx, heartbeat_sender_gossip_rx) =
+        tokio::sync::oneshot::channel::<iroh_gossip::api::GossipSender>();
+
     // Create separate channels for message passing
     let (listener_tx, listener_rx) = tokio::sync::mpsc::channel::<PeerMessage>(100);
     let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel::<PeerMessage>(100);
@@ -223,7 +227,9 @@ pub async fn network_manager_task(
             sender_gossip_tx,
             heartbeat_sender_gossip_tx,
             listener_tx_for_setup,
-        ).await {
+        )
+        .await
+        {
             tracing::error!("Gossip setup task error: {}", e);
         }
         info!("Gossip setup task completed");
@@ -239,7 +245,9 @@ pub async fn network_manager_task(
             listener_identity,
             listener_gossip_rx,
             listener_tx_for_handler,
-        ).await {
+        )
+        .await
+        {
             tracing::error!("Peer message listener error: {}", e);
         }
         info!("Peer message listener completed");
@@ -254,7 +262,9 @@ pub async fn network_manager_task(
             sender_gossip_rx,
             listener_rx,
             listener_sender_identity,
-        ).await {
+        )
+        .await
+        {
             tracing::error!("Listener message sender error: {}", e);
         }
         info!("Listener message sender completed");
@@ -264,13 +274,15 @@ pub async fn network_manager_task(
     let heartbeat_identity = identity.clone();
     let heartbeat_shutdown_rx = shutdown_rx.resubscribe();
     tasks.push(tokio::spawn(async move {
-        if let Err(e) = peer_message_heartbeat(heartbeat_shutdown_rx, heartbeat_identity, heartbeat_tx).await {
+        if let Err(e) =
+            peer_message_heartbeat(heartbeat_shutdown_rx, heartbeat_identity, heartbeat_tx).await
+        {
             tracing::error!("Heartbeat task error: {}", e);
         }
         info!("Heartbeat task completed");
     }));
 
-    // Heartbeat message sender task  
+    // Heartbeat message sender task
     let heartbeat_sender_identity = identity.clone();
     let heartbeat_sender_shutdown_rx = shutdown_rx.resubscribe();
     tasks.push(tokio::spawn(async move {
@@ -279,14 +291,16 @@ pub async fn network_manager_task(
             heartbeat_sender_gossip_rx,
             heartbeat_rx,
             heartbeat_sender_identity,
-        ).await {
+        )
+        .await
+        {
             tracing::error!("Heartbeat message sender error: {}", e);
         }
         info!("Heartbeat message sender completed");
     }));
 
     info!("Network manager running, all subtasks spawned. Waiting for shutdown...");
-    
+
     // Wait for shutdown signal
     let mut shutdown_rx = shutdown_rx;
     let _ = shutdown_rx.recv().await;
@@ -294,10 +308,7 @@ pub async fn network_manager_task(
 
     // Shutdown the gossip with timeout protection
     info!("Shutting down gossip network...");
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        gossip.shutdown()
-    ).await {
+    match tokio::time::timeout(std::time::Duration::from_secs(5), gossip.shutdown()).await {
         Ok(result) => {
             result?;
             info!("Gossip network shutdown complete");
@@ -341,7 +352,10 @@ async fn gossip_setup_task(
     debug!("Known peers for gossip discovery: {:?}", peers);
 
     // Subscribe to the peers topic with shutdown awareness
-    info!("Subscribing to gossip topic with {} known peers", peers.len());
+    info!(
+        "Subscribing to gossip topic with {} known peers",
+        peers.len()
+    );
     let gossip_result = select! {
         result = gossip.subscribe_and_join(PEER_TOPIC, peers) => {
             result.context("Failed to subscribe to gossip topic")
@@ -385,8 +399,10 @@ async fn gossip_setup_task(
                 node_id: identity.id(),
                 time: Utc::now(),
             },
-        )
-    ).await {
+        ),
+    )
+    .await
+    {
         Ok(result) => {
             result?;
             info!("Leaving message sent successfully");
@@ -548,7 +564,6 @@ async fn peer_message_sender_task(
     info!("Peer message sender stopped");
     Ok(())
 }
-
 
 async fn peer_message_heartbeat(
     mut shutdown_rx: broadcast::Receiver<()>,

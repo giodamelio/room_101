@@ -70,6 +70,10 @@ impl Identity {
             .execute(db)
             .await?;
 
+            debug!(
+                "Generated new identity public_key={}",
+                new_identity.secret_key.public()
+            );
             Ok(new_identity)
         }
     }
@@ -237,7 +241,38 @@ impl Event {
 
 static DATABASE: OnceLock<SqlitePool> = OnceLock::new();
 
-pub async fn init_db() -> Result<()> {
+pub async fn init_db(db_path: &str) -> Result<()> {
+    let connection_string = if db_path == ":memory:" {
+        return Err(anyhow::anyhow!(
+            "In-memory database not allowed. Use init_test_db() for tests."
+        ));
+    } else {
+        format!("sqlite:{}?mode=rwc", db_path) // rwc = read/write/create
+    };
+
+    let pool = SqlitePool::connect(&connection_string).await?;
+
+    // Run migrations
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    DATABASE
+        .set(pool)
+        .map_err(|_| anyhow::anyhow!("Database already initialized"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub async fn init_test_db() -> Result<()> {
+    // For tests, just use the regular DATABASE but allow reinitialization
+    if DATABASE.get().is_some() {
+        // Database already exists, clear all data for test isolation
+        let db = get_db();
+        sqlx::query!("DELETE FROM events").execute(db).await?;
+        sqlx::query!("DELETE FROM peers").execute(db).await?;
+        sqlx::query!("DELETE FROM identities").execute(db).await?;
+        return Ok(());
+    }
+
     let pool = SqlitePool::connect("sqlite::memory:").await?;
 
     // Run migrations

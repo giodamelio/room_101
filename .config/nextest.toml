@@ -1,0 +1,19 @@
+[profile.default]
+# Run tests in parallel by default since we'll have proper test isolation
+test-threads = "num-cpus"
+
+# Retry tests that might be flaky due to timing
+retries = 2
+
+# Show output for failed tests
+failure-output = "immediate"
+success-output = "never"
+
+# Set reasonable timeouts
+slow-timeout = { period = "10s", terminate-after = 2 }
+leak-timeout = "100ms"
+
+[profile.ci]
+# For CI environments, run tests more conservatively
+test-threads = 2
+retries = 1

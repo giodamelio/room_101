@@ -26,6 +26,10 @@ struct Args {
     /// Start the web server
     #[arg(long)]
     start_web: bool,
+
+    /// Path to SQLite database file
+    #[arg(long)]
+    db_path: String,
 }
 
 /// Initialize simple tracing-based logging to stdout
@@ -58,8 +62,13 @@ async fn main() -> Result<()> {
 
     info!("Starting Room 101");
 
+    // Validate database path
+    if args.db_path == ":memory:" {
+        anyhow::bail!("In-memory database not allowed in production. Use a file path instead.");
+    }
+
     // Initialize the global database
-    db::init_db()
+    db::init_db(&args.db_path)
         .await
         .context("Failed to initialize database")?;
 
@@ -81,7 +90,7 @@ async fn main() -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     info!("Starting tasks...");
-    
+
     // Spawn tasks
     let mut tasks = Vec::new();
 
@@ -109,17 +118,17 @@ async fn main() -> Result<()> {
     info!("All tasks started, waiting for Ctrl+C...");
 
     // Wait for Ctrl+C
-    tokio::signal::ctrl_c().await.context("Failed to listen for ctrl-c")?;
+    tokio::signal::ctrl_c()
+        .await
+        .context("Failed to listen for ctrl-c")?;
     info!("Received Ctrl+C, initiating shutdown...");
 
     // Send shutdown signal to all tasks
     let _ = shutdown_tx.send(());
 
     // Wait for all tasks to complete with timeout
-    let shutdown_result = tokio::time::timeout(
-        Duration::from_secs(5),
-        futures::future::join_all(tasks)
-    ).await;
+    let shutdown_result =
+        tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(tasks)).await;
 
     match shutdown_result {
         Ok(results) => {

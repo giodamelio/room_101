@@ -1,4 +1,5 @@
 target/
 .direnv/
 result/
-room_101.db
+*.db
+*.db*

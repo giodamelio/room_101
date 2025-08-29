@@ -292,6 +292,8 @@
 
               # Sqlx
               sqlx-cli
+
+              cargo-nextest
             ]
             ++
             # All the formatter programs

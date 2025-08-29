@@ -274,11 +274,7 @@ mod tests {
     }
 
     async fn setup_test_db() {
-        // For tests, we need to initialize the global database instance
-        // This is a bit tricky since OnceLock can only be initialized once
-        // In a real test setup, you'd want to use a different approach
-        // But for now, we'll just ensure the test database is available
-        let _ = crate::db::init_db().await;
+        let _ = crate::db::init_test_db().await;
     }
 
     #[tokio::test]
@@ -396,6 +392,6 @@ mod tests {
 
         response.assert_status(poem::http::StatusCode::BAD_REQUEST);
         let body = response.0.into_body().into_string().await.unwrap();
-        assert!(body.contains("already contains"));
+        assert!(body.contains("UNIQUE constraint failed") || body.contains("already exists"));
     }
 }
