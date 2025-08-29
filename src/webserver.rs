@@ -22,6 +22,36 @@ fn format_relative_time(datetime: &DateTime<Utc>) -> String {
     HumanTime::from(*datetime).to_string()
 }
 
+fn copy_button_component(text: &str, button_style: &str) -> Markup {
+    html! {
+        button
+            onclick=(format!("navigator.clipboard.writeText('{}'); this.textContent = '✓'; setTimeout(() => this.textContent = '📋', 1000);", text))
+            style=(button_style)
+            title=(format!("Copy {}", if text.len() > 20 { "Hash" } else { "Node ID" }))
+        {
+            "📋"
+        }
+    }
+}
+
+fn node_id_with_copy(node_id: &str, style_class: &str) -> Markup {
+    html! {
+        div style="display: flex; align-items: center; gap: 6px;" {
+            code style=(style_class) { (node_id) }
+            (copy_button_component(node_id, "background: #f3f4f6; border: 1px solid #d1d5db; padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 0.7em; color: #6b7280;"))
+        }
+    }
+}
+
+fn hash_with_copy(hash: &str, style_class: &str) -> Markup {
+    html! {
+        div style="display: flex; align-items: center; gap: 8px;" {
+            code style=(format!("{}; flex: 1;", style_class)) { (hash) }
+            (copy_button_component(hash, "background: #f3f4f6; border: 1px solid #d1d5db; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 0.7em; color: #6b7280; flex-shrink: 0;"))
+        }
+    }
+}
+
 fn format_json_for_ui(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Object(obj) => {
@@ -110,9 +140,7 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                         div style="display: flex; align-items: center; margin-bottom: 12px;" {
                             span style="font-size: 1.5em; margin-right: 8px;" { "🖥️" }
                             div style="flex: 1;" {
-                                div style="font-weight: bold; font-size: 0.9em; color: #333; font-family: monospace;" {
-                                    (peer.node_id)
-                                }
+                                (node_id_with_copy(&peer.node_id, "font-weight: bold; font-size: 0.9em; color: #333; font-family: monospace;"))
                             }
                             div style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e;" {}
                         }
@@ -332,10 +360,17 @@ fn tmpl_grouped_secret_list(
                             span { "Targets: " }
                             div style="display: flex; flex-wrap: wrap; gap: 4px;" {
                                 @for target_node_id in grouped_secret.get_target_node_ids() {
-                                    div style="background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 0.8em;" {
+                                    div style="background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; display: flex; align-items: center; gap: 4px;" {
                                         code { (target_node_id) }
+                                        button
+                                            onclick=(format!("navigator.clipboard.writeText('{}'); this.textContent = '✓'; setTimeout(() => this.textContent = '📋', 500);", target_node_id))
+                                            style="background: #f9fafb; border: 1px solid #d1d5db; padding: 1px 3px; border-radius: 2px; cursor: pointer; font-size: 0.6em; color: #6b7280;"
+                                            title="Copy Node ID"
+                                        {
+                                            "📋"
+                                        }
                                         @if let Some(hostname) = peer_hostnames.get(&target_node_id).and_then(|h| h.as_ref()) {
-                                            span style="color: #059669; margin-left: 4px;" { "(" (hostname) ")" }
+                                            span style="color: #059669; margin-left: 2px;" { "(" (hostname) ")" }
                                         }
                                     }
                                 }
@@ -344,10 +379,8 @@ fn tmpl_grouped_secret_list(
 
                         div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #666;" {
                             span style="margin-right: 6px;" { "🏷️" }
-                            span { "Hash: " }
-                            code style="background: #f1f5f9; padding: 2px 4px; border-radius: 3px; font-size: 0.8em; word-break: break-all;" {
-                                (grouped_secret.hash)
-                            }
+                            span style="margin-right: 6px;" { "Hash: " }
+                            (hash_with_copy(&grouped_secret.hash, "background: #f1f5f9; padding: 2px 4px; border-radius: 3px; font-size: 0.8em; word-break: break-all;"))
                         }
 
                         div style="display: flex; justify-content: space-between; font-size: 0.8em; color: #888;" {
@@ -453,13 +486,20 @@ fn tmpl_secret_detail_grouped(
                     label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Target Nodes" }
                     div style="display: flex; flex-wrap: wrap; gap: 8px;" {
                         @for secret in secrets {
-                            div style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; border: 1px solid #e2e8f0;" {
+                            div style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; border: 1px solid #e2e8f0; display: flex; align-items: center; gap: 6px;" {
                                 code { (secret.target_node_id) }
+                                button
+                                    onclick=(format!("navigator.clipboard.writeText('{}'); this.textContent = '✓'; setTimeout(() => this.textContent = '📋', 1000);", secret.target_node_id))
+                                    style="background: #f9fafb; border: 1px solid #d1d5db; padding: 1px 4px; border-radius: 2px; cursor: pointer; font-size: 0.6em; color: #6b7280;"
+                                    title="Copy Node ID"
+                                {
+                                    "📋"
+                                }
                                 @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
-                                    span style="color: #059669; margin-left: 8px;" { "(" (hostname) ")" }
+                                    span style="color: #059669; margin-left: 2px;" { "(" (hostname) ")" }
                                 }
                                 @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
-                                    span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 8px;" {
+                                    span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 2px;" {
                                         "YOU"
                                     }
                                 }
@@ -470,9 +510,7 @@ fn tmpl_secret_detail_grouped(
 
                 div {
                     label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Hash" }
-                    code style="background: #f1f5f9; padding: 8px; border-radius: 4px; display: block; word-break: break-all;" {
-                        (secret.hash)
-                    }
+                    (hash_with_copy(&secret.hash, "background: #f1f5f9; padding: 8px; border-radius: 4px; word-break: break-all;"))
                 }
 
                 div {
@@ -881,13 +919,20 @@ async fn process_share_secret(
                     label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Target Nodes" }
                     div style="display: flex; flex-wrap: wrap; gap: 8px;" {
                         @for secret in &updated_secrets {
-                            div style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; border: 1px solid #e2e8f0;" {
+                            div style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; border: 1px solid #e2e8f0; display: flex; align-items: center; gap: 6px;" {
                                 code { (secret.target_node_id) }
+                                button
+                                    onclick=(format!("navigator.clipboard.writeText('{}'); this.textContent = '✓'; setTimeout(() => this.textContent = '📋', 1000);", secret.target_node_id))
+                                    style="background: #f9fafb; border: 1px solid #d1d5db; padding: 1px 4px; border-radius: 2px; cursor: pointer; font-size: 0.6em; color: #6b7280;"
+                                    title="Copy Node ID"
+                                {
+                                    "📋"
+                                }
                                 @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
-                                    span style="color: #059669; margin-left: 8px;" { "(" (hostname) ")" }
+                                    span style="color: #059669; margin-left: 2px;" { "(" (hostname) ")" }
                                 }
                                 @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
-                                    span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 8px;" {
+                                    span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 2px;" {
                                         "YOU"
                                     }
                                 }
@@ -898,9 +943,7 @@ async fn process_share_secret(
 
                 div {
                     label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Hash" }
-                    code style="background: #f1f5f9; padding: 8px; border-radius: 4px; display: block; word-break: break-all;" {
-                        (secret.hash)
-                    }
+                    (hash_with_copy(&secret.hash, "background: #f1f5f9; padding: 8px; border-radius: 4px; word-break: break-all;"))
                 }
 
                 div {
