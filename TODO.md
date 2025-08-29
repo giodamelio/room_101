@@ -4,7 +4,7 @@
  - [x] Allow the WebUI to "share" a secret that that node owns to other nodes, but creating copies of it.
  - [x] Add copy buttons for places that node ids and hashs are displayed
  - [x] Add button to peer to view all secrets for that peer (using a new filter queryparam on the list page)
- - [ ] Create comprehensive node details page showing all peer info and embedded secrets list:
+ - [x] Create comprehensive node details page showing all peer info and embedded secrets list:
    - Add `/peers/:node_id` route and handler
    - Create `tmpl_peer_detail()` template with peer metadata, connection info, and embedded secrets
    - Make node IDs in peer list clickable links to detail page

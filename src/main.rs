@@ -14,6 +14,7 @@ mod error;
 mod middleware;
 mod network;
 mod utils;
+mod web_components;
 mod webserver;
 
 #[derive(Parser, Debug)]

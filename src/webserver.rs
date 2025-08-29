@@ -16,6 +16,7 @@ use crate::{
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
     network::{PeerMessage, announce_secret, announce_secret_deletion},
+    web_components::*,
 };
 
 fn format_relative_time(datetime: &DateTime<Utc>) -> String {
@@ -128,15 +129,11 @@ fn layout(content: Markup) -> Markup {
 fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
     html! {
         @if peers.is_empty() {
-            div style="text-align: center; padding: 40px; background: white; border-radius: 8px; border: 1px solid #ddd;" {
-                div style="font-size: 3em; margin-bottom: 16px; color: #999;" { "📡" }
-                h3 style="margin: 0 0 8px 0; color: #666;" { "No peers connected" }
-                p style="margin: 0; color: #888;" { "Add a peer below to get started with the network." }
-            }
+            (empty_state("📡", "No peers connected", "Add a peer below to get started with the network."))
         } @else {
             div id="peer-list" style="display: flex; flex-direction: column; gap: 16px;" {
                 @for peer in peers {
-                    div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" {
+                    (list_item_card(html! {
                         div style="display: flex; align-items: center; margin-bottom: 12px;" {
                             span style="font-size: 1.5em; margin-right: 8px;" { "🖥️" }
                             div style="flex: 1;" {
@@ -183,7 +180,7 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                                 "🔍 View Secrets"
                             }
                         }
-                    }
+                    }))
                 }
             }
         }
@@ -219,9 +216,7 @@ fn tmpl_index() -> Markup {
 
 fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Markup {
     layout(html! {
-        nav style="margin-bottom: 20px;" {
-            a href="/" { "← Home" }
-        }
+        (nav_breadcrumb("/", "Home"))
 
         h1 { "Peers" }
 
@@ -246,15 +241,15 @@ fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Markup {
             }
         }
 
-        h2 { "Network Peers" }
-        (tmpl_peer_list(&peers))
-
         h2 { "Add New Peer" }
         div id="error-message" style="color: red; margin-bottom: 10px;" {}
-        form method="POST" action="/peers" hx-post="/peers" hx-target="#peer-list" hx-swap="outerHTML" {
+        form method="POST" action="/peers" hx-post="/peers" hx-target="#peer-list" hx-swap="outerHTML" style="margin-bottom: 20px;" {
             input type="text" name="id" placeholder="Node ID" required;
             input type="submit" value="Add Peer";
         }
+
+        h2 { "Network Peers" }
+        (tmpl_peer_list(&peers))
     })
 }
 
@@ -319,9 +314,7 @@ fn tmpl_event_list(events: &Vec<Event>) -> Markup {
 
 fn tmpl_list_events(events: Vec<Event>) -> Markup {
     layout(html! {
-        nav style="margin-bottom: 20px;" {
-            a href="/" { "← Home" }
-        }
+        (nav_breadcrumb("/", "Home"))
 
         h1 { "Events" }
         p { "Last 100 events" }
@@ -347,15 +340,11 @@ fn tmpl_grouped_secret_list(
 
     html! {
         @if grouped_secrets.is_empty() {
-            div style="text-align: center; padding: 40px; background: white; border-radius: 8px; border: 1px solid #ddd;" {
-                div style="font-size: 3em; margin-bottom: 16px; color: #999;" { "🔐" }
-                h3 style="margin: 0 0 8px 0; color: #666;" { "No secrets stored" }
-                p style="margin: 0; color: #888;" { "Add a secret below to start sharing encrypted data with peers." }
-            }
+            (empty_state("🔐", "No secrets stored", "Add a secret below to start sharing encrypted data with peers."))
         } @else {
             div id="secret-list" style="display: flex; flex-direction: column; gap: 16px;" {
                 @for grouped_secret in grouped_secrets {
-                    div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" {
+                    (list_item_card(html! {
                         div style="display: flex; align-items: center; margin-bottom: 12px;" {
                             @if grouped_secret.has_target_node(&current_node_id) {
                                 span style="font-size: 1.5em; margin-right: 8px;" { "🔑" }
@@ -423,7 +412,7 @@ fn tmpl_grouped_secret_list(
                             span { "Created " (format_relative_time(&grouped_secret.get_created_at_utc())) }
                             span { "Updated " (format_relative_time(&grouped_secret.get_updated_at_utc())) }
                         }
-                    }
+                    }))
                 }
             }
         }
@@ -447,9 +436,7 @@ fn tmpl_list_grouped_secrets(
     };
 
     layout(html! {
-        nav style="margin-bottom: 20px;" {
-            a href="/" { "← Home" }
-        }
+        (nav_breadcrumb("/", "Home"))
 
         @if let Some(filter_id) = &peer_filter {
             div style="background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px; padding: 12px; margin-bottom: 20px;" {
@@ -473,14 +460,14 @@ fn tmpl_list_grouped_secrets(
                 span style="color: #6b7280; font-weight: normal; font-size: 0.8em;" { " (Filtered)" }
             }
         }
-        (tmpl_grouped_secret_list(&grouped_secrets, current_node_id, &peers))
 
-        h2 { "Add New Secret" }
-        div style="margin-top: 20px;" {
+        div style="margin-bottom: 20px;" {
             a href="/secrets/new" style="display: inline-block; padding: 10px 20px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px;" {
                 "➕ Add Secret"
             }
         }
+
+        (tmpl_grouped_secret_list(&grouped_secrets, current_node_id, &peers))
     })
 }
 
@@ -543,13 +530,11 @@ fn tmpl_secret_detail_grouped(
         .collect();
 
     layout(html! {
-        nav style="margin-bottom: 20px;" {
-            a href="/secrets" { "← Back to Secrets" }
-        }
+        (nav_breadcrumb("/secrets", "Back to Secrets"))
 
         h1 { "Secret: " (secret.name) }
 
-        div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;" {
+        (card_container(html! {
             div style="display: grid; gap: 16px;" {
                 div {
                     label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Name" }
@@ -636,7 +621,7 @@ fn tmpl_secret_detail_grouped(
                     }
                 }
             }
-        }
+        }, None))
     })
 }
 
@@ -656,7 +641,7 @@ fn tmpl_secret_detail(
 
         h1 { "Secret: " (secret.name) }
 
-        div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;" {
+        (card_container(html! {
             div style="display: grid; gap: 16px;" {
                 div {
                     label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Name" }
@@ -702,7 +687,7 @@ fn tmpl_secret_detail(
                     }
                 }
             }
-        }
+        }, None))
 
         @if is_for_current_node {
             div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 16px; margin-bottom: 20px;" {
@@ -976,13 +961,11 @@ async fn process_share_secret(
             }
         }
 
-        nav style="margin-bottom: 20px;" {
-            a href="/secrets" { "← Back to Secrets" }
-        }
+        (nav_breadcrumb("/secrets", "Back to Secrets"))
 
         h1 { "Secret: " (secret.name) }
 
-        div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;" {
+        (card_container(html! {
             div style="display: grid; gap: 16px;" {
                 div {
                     label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Name" }
@@ -1067,7 +1050,7 @@ async fn process_share_secret(
                     }
                 }
             }
-        }
+        }, None))
     }))
 }
 
@@ -1171,9 +1154,7 @@ fn tmpl_share_secret(
 
 fn tmpl_add_secret(peers: Vec<Peer>, current_node_id: NodeId) -> Markup {
     layout(html! {
-        nav style="margin-bottom: 20px;" {
-            a href="/secrets" { "← Back to Secrets" }
-        }
+        (nav_breadcrumb("/secrets", "Back to Secrets"))
 
         h1 { "Add New Secret" }
 
@@ -1499,9 +1480,7 @@ fn tmpl_peer_detail(peer: &Peer, secrets: Vec<GroupedSecret>, current_node_id: N
     let is_current_node = peer.node_id == current_node_id.to_string();
 
     layout(html! {
-        nav style="margin-bottom: 20px;" {
-            a href="/peers" { "← Back to Peers" }
-        }
+        (nav_breadcrumb("/peers", "Back to Peers"))
 
         h1 {
             @if is_current_node {
