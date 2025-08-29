@@ -18,7 +18,9 @@
       "Bash(sqlx migrate:*)",
       "Bash(sqlx database:*)",
       "mcp__ide__getDiagnostics",
-      "Bash(devenv tasks run:*)"
+      "Bash(devenv tasks run:*)",
+      "mcp__language-server__diagnostics",
+      "WebFetch(domain:htmx.org)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -2,12 +2,15 @@ use std::sync::OnceLock;
 
 use age::secrecy::ExposeSecret;
 use age::x25519::Identity as AgeIdentity;
-use anyhow::Result;
+use age::{Decryptor, Encryptor};
+use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use iroh::{NodeId, SecretKey};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
+use std::io::{Read as StdRead, Write as StdWrite};
 use tracing::debug;
 use uuid::Uuid;
 
@@ -36,7 +39,8 @@ fn age_identity_to_string(age_key: &AgeIdentity) -> String {
 
 fn age_identity_from_str(s: &str) -> Result<AgeIdentity, anyhow::Error> {
     s.parse::<AgeIdentity>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse AgeIdentity: {}", e))
+        .map_err(anyhow::Error::msg)
+        .context("Failed to parse AgeIdentity")
 }
 
 pub fn age_public_key_to_string(age_key: &AgeIdentity) -> String {
@@ -149,6 +153,33 @@ impl Identity {
 
     pub fn id(&self) -> NodeId {
         self.secret_key.public()
+    }
+
+    pub async fn get() -> anyhow::Result<Self> {
+        let db = get_db();
+
+        // Try to get existing identity
+        let row = sqlx::query!("SELECT secret_key, age_key FROM identities LIMIT 1")
+            .fetch_optional(db)
+            .await?;
+
+        if let Some(row) = row {
+            let secret_key = secret_key_from_hex(&row.secret_key)?;
+            let age_key = if let Some(age_key_str) = &row.age_key {
+                age_identity_from_str(age_key_str)?
+            } else {
+                // Handle legacy case where age_key might be NULL
+                AgeIdentity::generate()
+            };
+            Ok(Self {
+                secret_key,
+                age_key,
+            })
+        } else {
+            anyhow::bail!(
+                "No identity found in database. Identity should be created during startup."
+            )
+        }
     }
 
     pub async fn get_or_create() -> anyhow::Result<Self> {
@@ -360,6 +391,238 @@ impl Event {
     }
 }
 
+fn validate_secret_name(name: &str) -> Result<()> {
+    if !hostname_validator::is_valid(name) {
+        anyhow::bail!("Secret name must be a valid DNS hostname (RFC 1123)");
+    }
+    Ok(())
+}
+
+fn compute_hash(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
+async fn encrypt_secret_for_node(secret_content: &[u8], target_node_id: NodeId) -> Result<Vec<u8>> {
+    // Check if target is the current node
+    let current_identity = Identity::get().await?;
+    let age_public_key_str = if target_node_id == current_identity.id() {
+        // Use current node's Age public key
+        age_public_key_to_string(&current_identity.age_key)
+    } else {
+        // Look up peer in database
+        let peers = Peer::list().await?;
+        let target_peer = peers
+            .into_iter()
+            .find(|p| {
+                if let Ok(peer_node_id) = node_id_from_string(&p.node_id) {
+                    peer_node_id == target_node_id
+                } else {
+                    false
+                }
+            })
+            .with_context(|| format!("Target node {target_node_id} not found in peers"))?;
+
+        target_peer
+            .age_public_key
+            .with_context(|| format!("Target node {target_node_id} has no Age public key"))?
+    };
+
+    let recipient: age::x25519::Recipient = age_public_key_str
+        .parse()
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("Invalid Age public key for {target_node_id}"))?;
+
+    let recipients: Vec<&dyn age::Recipient> = vec![&recipient];
+    let encryptor =
+        Encryptor::with_recipients(recipients.into_iter()).context("Failed to create encryptor")?;
+    let mut encrypted_data = Vec::new();
+    let mut writer = encryptor.wrap_output(&mut encrypted_data)?;
+
+    writer
+        .write_all(secret_content)
+        .context("Failed to write secret data")?;
+    writer.finish().context("Failed to finish encryption")?;
+
+    Ok(encrypted_data)
+}
+
+pub async fn decrypt_secret_for_identity(
+    encrypted_data: &[u8],
+    identity: &Identity,
+) -> Result<Vec<u8>> {
+    let decryptor = Decryptor::new(encrypted_data).context("Failed to create decryptor")?;
+
+    let mut decrypted_data = Vec::new();
+    let mut reader = decryptor
+        .decrypt(std::iter::once(&identity.age_key as &dyn age::Identity))
+        .context("Failed to decrypt")?;
+
+    reader
+        .read_to_end(&mut decrypted_data)
+        .context("Failed to read decrypted data")?;
+
+    Ok(decrypted_data)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Secret {
+    pub name: String,
+    pub encrypted_data: Vec<u8>,
+    pub hash: String,
+    pub target_node_id: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+impl Secret {
+    pub async fn create(
+        name: String,
+        secret_content: &[u8],
+        target_node_id: NodeId,
+    ) -> Result<Self> {
+        validate_secret_name(&name)?;
+
+        let encrypted_data = encrypt_secret_for_node(secret_content, target_node_id).await?;
+        let hash = compute_hash(&encrypted_data);
+        let target_node_id_str = node_id_to_string(&target_node_id);
+        let now = Utc::now().naive_utc();
+
+        let db = get_db();
+        sqlx::query!(
+            "INSERT INTO secrets (name, encrypted_data, hash, target_node_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            name,
+            encrypted_data,
+            hash,
+            target_node_id_str,
+            now,
+            now
+        )
+        .execute(db)
+        .await?;
+
+        // Log secret creation event
+        Event::log(
+            EventType::PeerMessage {
+                message_type: "SECRET_CREATED".to_string(),
+            },
+            format!("Created new secret '{name}' for node {target_node_id}"),
+            serde_json::json!({
+                "secret_name": name,
+                "target_node_id": target_node_id_str,
+                "hash": hash
+            })
+            .into(),
+        )
+        .await?;
+
+        Ok(Self {
+            name,
+            encrypted_data,
+            hash,
+            target_node_id: target_node_id_str,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    pub async fn upsert(
+        name: String,
+        encrypted_data: Vec<u8>,
+        hash: String,
+        target_node_id: NodeId,
+    ) -> Result<bool> {
+        validate_secret_name(&name)?;
+
+        let target_node_id_str = node_id_to_string(&target_node_id);
+        let now = Utc::now().naive_utc();
+
+        let db = get_db();
+
+        // Check if we already have this secret with the same hash
+        let existing = sqlx::query!(
+            "SELECT hash FROM secrets WHERE name = ? AND target_node_id = ?",
+            name,
+            target_node_id_str
+        )
+        .fetch_optional(db)
+        .await?;
+
+        let was_new = existing.is_none();
+
+        if let Some(existing_secret) = existing {
+            if existing_secret.hash == hash {
+                // Same hash, no update needed
+                return Ok(false);
+            }
+        }
+
+        // Insert or update the secret
+        sqlx::query!(
+            "INSERT INTO secrets (name, encrypted_data, hash, target_node_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(name, target_node_id) DO UPDATE SET
+             encrypted_data = excluded.encrypted_data,
+             hash = excluded.hash,
+             updated_at = excluded.updated_at",
+            name,
+            encrypted_data,
+            hash,
+            target_node_id_str,
+            now,
+            now
+        )
+        .execute(db)
+        .await?;
+
+        // Log secret upsert event
+        Event::log(
+            EventType::PeerMessage {
+                message_type: "SECRET_UPSERTED".to_string(),
+            },
+            format!("Updated secret '{name}' for node {target_node_id}"),
+            serde_json::json!({
+                "secret_name": name,
+                "target_node_id": target_node_id_str,
+                "hash": hash,
+                "was_new": was_new
+            })
+            .into(),
+        )
+        .await?;
+
+        Ok(true)
+    }
+
+    pub async fn list_all() -> Result<Vec<Self>> {
+        let db = get_db();
+
+        let secrets = sqlx::query_as!(
+            Secret,
+            "SELECT name, encrypted_data, hash, target_node_id, created_at, updated_at
+             FROM secrets ORDER BY updated_at DESC"
+        )
+        .fetch_all(db)
+        .await?;
+
+        Ok(secrets)
+    }
+
+    pub fn get_target_node_id(&self) -> Result<NodeId> {
+        node_id_from_string(&self.target_node_id)
+    }
+
+    pub fn get_created_at_utc(&self) -> DateTime<Utc> {
+        DateTime::from_naive_utc_and_offset(self.created_at, Utc)
+    }
+
+    pub fn get_updated_at_utc(&self) -> DateTime<Utc> {
+        DateTime::from_naive_utc_and_offset(self.updated_at, Utc)
+    }
+}
+
 static DATABASE: OnceLock<SqlitePool> = OnceLock::new();
 
 pub async fn init_db(db_path: &str) -> Result<()> {
@@ -378,7 +641,8 @@ pub async fn init_db(db_path: &str) -> Result<()> {
 
     DATABASE
         .set(pool)
-        .map_err(|_| anyhow::anyhow!("Database already initialized"))?;
+        .map_err(|_| anyhow::anyhow!("Database already initialized"))
+        .context("Failed to initialize database")?;
     Ok(())
 }
 
@@ -401,7 +665,8 @@ pub async fn init_test_db() -> Result<()> {
 
     DATABASE
         .set(pool)
-        .map_err(|_| anyhow::anyhow!("Database already initialized"))?;
+        .map_err(|_| anyhow::anyhow!("Database already initialized"))
+        .context("Failed to initialize database")?;
     Ok(())
 }
 

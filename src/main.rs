@@ -92,22 +92,30 @@ async fn main() -> Result<()> {
     // Spawn tasks
     let mut tasks = Vec::new();
 
-    // Only start web server if requested
-    if args.start_web {
+    // Create shared message channel for webserver integration if web server is enabled
+    let peer_message_tx = if args.start_web {
+        debug!("Creating shared peer message channel for webserver integration");
+        let (tx, _) = tokio::sync::mpsc::channel::<network::PeerMessage>(100);
+
         debug!("Starting webserver task");
         let shutdown_rx = shutdown_tx.subscribe();
+        let webserver_tx = tx.clone();
         tasks.push(tokio::spawn(async move {
-            if let Err(e) = webserver_task(shutdown_rx).await {
+            if let Err(e) = webserver_task(shutdown_rx, webserver_tx).await {
                 error!("Webserver task error: {}", e);
             }
             debug!("Webserver task completed");
         }));
-    }
+
+        Some(tx)
+    } else {
+        None
+    };
 
     debug!("Starting network manager task");
     let shutdown_rx = shutdown_tx.subscribe();
     tasks.push(tokio::spawn(async move {
-        if let Err(e) = network_manager_task(shutdown_rx, bootstrap_nodes).await {
+        if let Err(e) = network_manager_task(shutdown_rx, bootstrap_nodes, peer_message_tx).await {
             error!("Network manager task error: {}", e);
         }
         debug!("Network manager task completed");

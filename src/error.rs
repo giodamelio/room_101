@@ -8,6 +8,15 @@ pub enum AppError {
 
     #[error("Database error: {0}")]
     Database(#[from] anyhow::Error),
+
+    #[error("Internal server error: {0}")]
+    Internal(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Access forbidden: {0}")]
+    Forbidden(String),
 }
 
 impl ResponseError for AppError {
@@ -15,6 +24,9 @@ impl ResponseError for AppError {
         match self {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
         }
     }
 

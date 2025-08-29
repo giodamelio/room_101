@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::db::{Event, EventType, Identity, Peer, age_public_key_to_string};
+use crate::db::{Event, EventType, Identity, Peer, Secret, age_public_key_to_string};
 use crate::utils::topic_id;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -86,6 +86,14 @@ pub enum PeerMessage {
         node_id: NodeId,
         time: DateTime<Utc>,
     },
+    #[serde(rename = "SECRET")]
+    Secret {
+        name: String,
+        encrypted_data: Vec<u8>,
+        hash: String,
+        target_node_id: NodeId,
+        time: DateTime<Utc>,
+    },
 }
 
 impl Display for PeerMessage {
@@ -95,6 +103,7 @@ impl Display for PeerMessage {
             PeerMessage::Leaving { .. } => f.write_str("LEAVING"),
             PeerMessage::Introduction { .. } => f.write_str("INTRODUCTION"),
             PeerMessage::Heartbeat { .. } => f.write_str("HEARTBEAT"),
+            PeerMessage::Secret { .. } => f.write_str("SECRET"),
         }
     }
 }
@@ -151,9 +160,91 @@ async fn send_peer_message(
     Ok(())
 }
 
+async fn send_all_secrets_to_node(
+    target_node_id: NodeId,
+    peer_message_tx: mpsc::Sender<PeerMessage>,
+) -> Result<()> {
+    let all_secrets = Secret::list_all().await?;
+    let secrets_count = all_secrets.len();
+
+    for secret in all_secrets {
+        let secret_message = PeerMessage::Secret {
+            name: secret.name.clone(),
+            encrypted_data: secret.encrypted_data.clone(),
+            hash: secret.hash.clone(),
+            target_node_id: secret.get_target_node_id()?,
+            time: Utc::now(),
+        };
+
+        // Log secret send event
+        Event::log(
+            EventType::PeerMessage {
+                message_type: "SECRET".to_string(),
+            },
+            format!("Sending secret '{}' to node {target_node_id}", secret.name),
+            serde_json::to_value(&secret_message).ok(),
+        )
+        .await?;
+
+        send_peer_message(peer_message_tx.clone(), secret_message).await?;
+    }
+
+    debug!("Sent {} secrets to node {}", secrets_count, target_node_id);
+
+    // Log batch send completion
+    Event::log(
+        EventType::PeerMessage {
+            message_type: "SECRET_BATCH".to_string(),
+        },
+        format!("Completed sending {secrets_count} secrets to new node {target_node_id}"),
+        serde_json::json!({
+            "target_node_id": target_node_id.to_string(),
+            "secrets_count": secrets_count
+        })
+        .into(),
+    )
+    .await?;
+
+    Ok(())
+}
+
+pub async fn announce_secret(
+    secret: &Secret,
+    peer_message_tx: mpsc::Sender<PeerMessage>,
+) -> Result<()> {
+    let secret_message = PeerMessage::Secret {
+        name: secret.name.clone(),
+        encrypted_data: secret.encrypted_data.clone(),
+        hash: secret.hash.clone(),
+        target_node_id: secret.get_target_node_id()?,
+        time: Utc::now(),
+    };
+
+    // Log secret announcement event
+    Event::log(
+        EventType::PeerMessage {
+            message_type: "SECRET".to_string(),
+        },
+        format!(
+            "Announcing secret '{}' for node {}",
+            secret.name, secret.target_node_id
+        ),
+        serde_json::to_value(&secret_message).ok(),
+    )
+    .await?;
+
+    send_peer_message(peer_message_tx, secret_message).await?;
+    debug!(
+        "Announced secret '{}' for node {}",
+        secret.name, secret.target_node_id
+    );
+    Ok(())
+}
+
 pub async fn network_manager_task(
     shutdown_rx: broadcast::Receiver<()>,
     bootstrap_nodes: Option<Vec<NodeId>>,
+    external_peer_message_tx: Option<mpsc::Sender<PeerMessage>>,
 ) -> Result<()> {
     debug!("Network manager starting...");
 
@@ -209,7 +300,15 @@ pub async fn network_manager_task(
         tokio::sync::oneshot::channel::<iroh_gossip::api::GossipSender>();
 
     // Create separate channels for message passing
-    let (listener_tx, listener_rx) = tokio::sync::mpsc::channel::<PeerMessage>(100);
+    // Use external channel if provided (for webserver integration), otherwise create internal ones
+    let (listener_tx, listener_rx) = if let Some(ext_tx) = external_peer_message_tx {
+        (ext_tx, {
+            let (_, rx) = tokio::sync::mpsc::channel::<PeerMessage>(1);
+            rx
+        })
+    } else {
+        tokio::sync::mpsc::channel::<PeerMessage>(100)
+    };
     let (heartbeat_tx, heartbeat_rx) = tokio::sync::mpsc::channel::<PeerMessage>(100);
 
     // Spawn all network subtasks immediately so they can receive shutdown signals
@@ -436,7 +535,7 @@ async fn peer_message_listener_task(
     // Wait for gossip handles or shutdown
     let mut peer_reciever = select! {
         receiver = gossip_rx => {
-            receiver.map_err(|_| anyhow::anyhow!("Gossip setup task dropped"))?
+            receiver.context("Gossip setup task dropped")?
         }
         _ = shutdown_rx.recv() => {
             debug!("Peer message listener received shutdown before gossip ready");
@@ -481,6 +580,11 @@ async fn peer_message_listener_task(
                         },
                     )
                     .await?;
+
+                    // Send all secrets to the newly joined node
+                    if let Err(e) = send_all_secrets_to_node(node_id, peer_message_tx.clone()).await {
+                        debug!("Failed to send secrets to new node {node_id}: {e}");
+                    }
                 }
                 PeerMessage::Leaving { node_id, time } => {
                     trace!(%node_id, %time, "Handling PeerMessage::Leaving");
@@ -519,6 +623,67 @@ async fn peer_message_listener_task(
                     if let Err(e) = Peer::upsert_peer(*node_id, Some(*time), hostname.clone(), Some(age_public_key.clone())).await {
                         debug!("Failed to update peer {node_id} introduction time: {e}");
                     }
+
+                    // Send all secrets to the newly introduced node
+                    if let Err(e) = send_all_secrets_to_node(*node_id, peer_message_tx.clone()).await {
+                        debug!("Failed to send secrets to new node {node_id}: {e}");
+                    }
+                }
+                PeerMessage::Secret {
+                    ref name,
+                    ref encrypted_data,
+                    ref hash,
+                    ref target_node_id,
+                    ref time,
+                } => {
+                    trace!(%name, %target_node_id, %hash, %time, "Handling PeerMessage::Secret");
+
+                    // Only process secrets that are meant for us
+                    if *target_node_id == identity.id() {
+                        // Use upsert to handle hash-based deduplication
+                        match Secret::upsert(
+                            name.clone(),
+                            encrypted_data.clone(),
+                            hash.clone(),
+                            *target_node_id,
+                        ).await {
+                            Ok(was_updated) => {
+                                if was_updated {
+                                    debug!("Updated secret '{}' from peer", name);
+                                    Event::log(
+                                        EventType::PeerMessage {
+                                            message_type: message.to_string(),
+                                        },
+                                        format!("Received new/updated secret: {name}"),
+                                        serde_json::to_value(message.clone()).ok(),
+                                    )
+                                    .await?;
+                                } else {
+                                    trace!("Secret '{}' already up to date (same hash)", name);
+                                }
+                            }
+                            Err(e) => {
+                                debug!("Failed to store secret '{}': {}", name, e);
+                            }
+                        }
+                    } else {
+                        // Store secrets for other nodes too (for gossip distribution)
+                        match Secret::upsert(
+                            name.clone(),
+                            encrypted_data.clone(),
+                            hash.clone(),
+                            *target_node_id,
+                        ).await {
+                            Ok(was_updated) => {
+                                if was_updated {
+                                    trace!("Stored secret '{}' for node {}", name, target_node_id);
+                                }
+                            }
+                            Err(e) => {
+                                trace!("Failed to store secret '{}' for node {}: {}", name, target_node_id, e);
+                            }
+                        }
+                    }
                 }
                     }
                 }
@@ -545,7 +710,7 @@ async fn peer_message_sender_task(
     // Wait for gossip handles or shutdown
     let peer_sender = select! {
         sender = gossip_rx => {
-            sender.map_err(|_| anyhow::anyhow!("Gossip setup task dropped"))?
+            sender.context("Gossip setup task dropped")?
         }
         _ = shutdown_rx.recv() => {
             debug!("Peer message sender received shutdown before gossip ready");
