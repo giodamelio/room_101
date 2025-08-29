@@ -324,6 +324,18 @@ impl Peer {
         }
         Ok(node_ids)
     }
+
+    pub async fn find_by_node_id(node_id: &str) -> anyhow::Result<Option<Self>> {
+        let db = get_db();
+        let peer = sqlx::query_as!(
+            Peer,
+            "SELECT node_id, last_seen, hostname, age_public_key FROM peers WHERE node_id = ?",
+            node_id
+        )
+        .fetch_optional(db)
+        .await?;
+        Ok(peer)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

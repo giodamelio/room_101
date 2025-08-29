@@ -140,7 +140,11 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                         div style="display: flex; align-items: center; margin-bottom: 12px;" {
                             span style="font-size: 1.5em; margin-right: 8px;" { "🖥️" }
                             div style="flex: 1;" {
-                                (node_id_with_copy(&peer.node_id, "font-weight: bold; font-size: 0.9em; color: #333; font-family: monospace;"))
+                                a href=(format!("/peers/{}", peer.node_id))
+                                  style="text-decoration: none; color: inherit;"
+                                {
+                                    (node_id_with_copy(&peer.node_id, "font-weight: bold; font-size: 0.9em; color: #2563eb; font-family: monospace;"))
+                                }
                             }
                             div style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e;" {}
                         }
@@ -213,13 +217,36 @@ fn tmpl_index() -> Markup {
     })
 }
 
-fn tmpl_list_peers(peers: Vec<Peer>) -> Markup {
+fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Markup {
     layout(html! {
         nav style="margin-bottom: 20px;" {
             a href="/" { "← Home" }
         }
 
         h1 { "Peers" }
+
+        h2 style="margin-bottom: 12px;" { "This Node" }
+        div style="background: #f0f9ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 16px; margin-bottom: 24px;" {
+            div style="display: flex; align-items: center; margin-bottom: 12px;" {
+                span style="font-size: 1.5em; margin-right: 8px;" { "🏠" }
+                div style="flex: 1;" {
+                    a href=(format!("/peers/{}", current_node_id.to_string()))
+                      style="text-decoration: none; color: inherit;"
+                    {
+                        (node_id_with_copy(&current_node_id.to_string(), "font-weight: bold; font-size: 0.9em; color: #2563eb; font-family: monospace;"))
+                    }
+                }
+                span style="background: #3b82f6; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.8em;" {
+                    "YOU"
+                }
+            }
+            div style="display: flex; align-items: center; font-size: 0.85em; color: #666;" {
+                span style="margin-right: 6px;" { "🔗" }
+                span { "Your local node - always connected" }
+            }
+        }
+
+        h2 { "Network Peers" }
         (tmpl_peer_list(&peers))
 
         h2 { "Add New Peer" }
@@ -465,7 +492,8 @@ async fn index() -> Result<Markup> {
 #[handler]
 async fn list_peers() -> Result<Markup> {
     let peers = Peer::list().await?;
-    Ok(tmpl_list_peers(peers))
+    let identity = get_current_identity().await?;
+    Ok(tmpl_list_peers(peers, identity.id()))
 }
 
 #[handler]
@@ -1467,10 +1495,178 @@ async fn delete_secret(
     ))
 }
 
+fn tmpl_peer_detail(peer: &Peer, secrets: Vec<GroupedSecret>, current_node_id: NodeId) -> Markup {
+    let is_current_node = peer.node_id == current_node_id.to_string();
+
+    layout(html! {
+        nav style="margin-bottom: 20px;" {
+            a href="/peers" { "← Back to Peers" }
+        }
+
+        h1 {
+            @if is_current_node {
+                "Your Node Details"
+            } @else {
+                "Peer Details"
+            }
+        }
+
+        div style=(format!("background: white; border: {}; border-radius: 8px; padding: 20px; margin-bottom: 20px;",
+                          if is_current_node { "2px solid #3b82f6" } else { "1px solid #ddd" })) {
+            div style="display: flex; align-items: center; margin-bottom: 16px;" {
+                span style="font-size: 2em; margin-right: 12px;" {
+                    @if is_current_node {
+                        "🏠"
+                    } @else {
+                        "🖥️"
+                    }
+                }
+                div {
+                    h2 style="margin: 0; color: #333;" {
+                        @if is_current_node {
+                            "Your Node Information"
+                        } @else {
+                            "Node Information"
+                        }
+                    }
+                }
+                @if let Some(_last_seen) = &peer.last_seen {
+                    div style="width: 12px; height: 12px; border-radius: 50%; background: #22c55e; margin-left: auto;" {}
+                } @else {
+                    div style="width: 12px; height: 12px; border-radius: 50%; background: #6b7280; margin-left: auto;" {}
+                }
+            }
+
+            div style="display: grid; gap: 16px;" {
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Node ID" }
+                    (node_id_with_copy(&peer.node_id, "background: #f1f5f9; padding: 8px; border-radius: 4px; font-size: 0.9em;"))
+                }
+
+                @if let Some(hostname) = &peer.hostname {
+                    div {
+                        label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Hostname" }
+                        div style="display: flex; align-items: center; gap: 8px;" {
+                            span style="font-size: 1.2em;" { "🏠" }
+                            code style="background: #f1f5f9; padding: 8px; border-radius: 4px;" { (hostname) }
+                        }
+                    }
+                }
+
+                @if let Some(age_key) = &peer.age_public_key {
+                    div {
+                        label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Age Public Key" }
+                        div style="display: flex; align-items: center; gap: 8px;" {
+                            span style="font-size: 1.2em;" { "🔐" }
+                            code style="background: #f1f5f9; padding: 8px; border-radius: 4px; word-break: break-all; font-size: 0.8em;" { (age_key) }
+                        }
+                    }
+                }
+
+                div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;" {
+                    div {
+                        label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Connection Status" }
+                        @if is_current_node {
+                            span style="background: #dbeafe; color: #1d4ed8; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; display: inline-flex; align-items: center; gap: 4px;" {
+                                span { "●" }
+                                "Local Node"
+                            }
+                        } @else if let Some(_last_seen) = &peer.last_seen {
+                            span style="background: #dcfce7; color: #166534; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; display: inline-flex; align-items: center; gap: 4px;" {
+                                span { "●" }
+                                "Connected"
+                            }
+                        } @else {
+                            span style="background: #f3f4f6; color: #6b7280; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; display: inline-flex; align-items: center; gap: 4px;" {
+                                span { "○" }
+                                "Never Seen"
+                            }
+                        }
+                    }
+
+                    @if let Some(_last_seen) = &peer.last_seen {
+                        div {
+                            label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Last Seen" }
+                            span style="color: #6b7280;" { (format_relative_time(&peer.get_last_seen_utc().unwrap())) }
+                        }
+                    }
+                }
+            }
+        }
+
+        h2 style="margin: 24px 0 16px 0;" {
+            @if is_current_node {
+                "Your Secrets"
+            } @else {
+                "Secrets for This Peer"
+            }
+        }
+        @if secrets.is_empty() {
+            div style="text-align: center; padding: 40px; background: white; border-radius: 8px; border: 1px solid #ddd;" {
+                div style="font-size: 3em; margin-bottom: 16px; color: #999;" { "🔐" }
+                h3 style="margin: 0 0 8px 0; color: #666;" {
+                    @if is_current_node {
+                        "No secrets stored"
+                    } @else {
+                        "No secrets for this peer"
+                    }
+                }
+                p style="margin: 0; color: #888;" {
+                    @if is_current_node {
+                        "You don't have any secrets stored yet."
+                    } @else {
+                        "This peer doesn't have any secrets shared with them yet."
+                    }
+                }
+            }
+        } @else {
+            (tmpl_grouped_secret_list(&secrets, current_node_id, &[peer.clone()]))
+        }
+    })
+}
+
+#[handler]
+async fn get_peer_detail(poem::web::Path(node_id): poem::web::Path<String>) -> Result<Markup> {
+    // Parse the node ID to validate it
+    let parsed_node_id = node_id
+        .parse::<NodeId>()
+        .map_err(|e| AppError::BadRequest(format!("Invalid node ID: {e}")))?;
+
+    let identity = get_current_identity().await?;
+
+    // Check if this is the current node
+    let peer = if parsed_node_id == identity.id() {
+        // Create a virtual peer entry for the current node
+        Peer {
+            node_id: node_id.clone(),
+            last_seen: Some(chrono::Utc::now().naive_utc()), // Always "connected"
+            hostname: Some("localhost".to_string()),
+            age_public_key: Some(crate::db::age_public_key_to_string(&identity.age_key)),
+        }
+    } else {
+        // Get the peer from database
+        Peer::find_by_node_id(&node_id)
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .ok_or_else(|| AppError::NotFound("Peer not found".to_string()))?
+    };
+
+    // Get secrets for this peer
+    let mut grouped_secrets = Secret::list_all_grouped()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Filter to only secrets for this peer
+    grouped_secrets.retain(|secret| secret.has_target_node_str(&node_id));
+
+    Ok(tmpl_peer_detail(&peer, grouped_secrets, identity.id()))
+}
+
 pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
     Route::new()
         .at("/", get(index))
         .at("/peers", get(list_peers).post(create_peer))
+        .at("/peers/:node_id", get(get_peer_detail))
         .at("/events", get(list_events))
         .at("/secrets", get(list_secrets).post(create_secret))
         .at("/secrets/new", get(add_secret_form))
