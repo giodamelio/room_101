@@ -5,7 +5,7 @@ use maud::{DOCTYPE, Markup, html};
 use poem::{Endpoint, EndpointExt, Route, Server, get, handler, listener::TcpListener, web::Form};
 use serde::Deserialize;
 use tokio::sync::broadcast;
-use tracing::info;
+use tracing::{debug, error, info};
 
 use crate::{
     db::{Event, EventType, Peer},
@@ -239,7 +239,7 @@ pub fn create_app() -> impl Endpoint {
 }
 
 pub async fn webserver_task(mut shutdown_rx: broadcast::Receiver<()>) -> anyhow::Result<()> {
-    info!("WebServer task starting...");
+    debug!("WebServer task starting...");
 
     let app = create_app();
 
@@ -248,18 +248,18 @@ pub async fn webserver_task(mut shutdown_rx: broadcast::Receiver<()>) -> anyhow:
             app,
             async {
                 let _ = shutdown_rx.recv().await;
-                info!("Poem server received shutdown signal");
+                debug!("Poem server received shutdown signal");
             },
             Some(std::time::Duration::from_secs(5)),
         )
         .await;
 
     match result {
-        Ok(_) => info!("Poem server shutdown complete"),
-        Err(e) => tracing::error!("Poem server error: {}", e),
+        Ok(_) => debug!("Poem server shutdown complete"),
+        Err(e) => error!("Poem server error: {}", e),
     }
 
-    info!("WebServer task stopped");
+    debug!("WebServer task stopped");
     Ok(())
 }
 

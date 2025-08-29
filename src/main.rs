@@ -3,7 +3,7 @@ use clap::Parser;
 use iroh::NodeId;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tracing::info;
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use network::network_manager_task;
@@ -54,11 +54,11 @@ fn setup_tracing() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse command line arguments
-    let args = Args::parse();
-
     // Initialize tracing first
     setup_tracing()?;
+
+    // Parse command line arguments
+    let args = Args::parse();
 
     info!("Starting Room 101");
 
@@ -89,38 +89,37 @@ async fn main() -> Result<()> {
     // Create shutdown broadcast channel
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
-    info!("Starting tasks...");
-
     // Spawn tasks
     let mut tasks = Vec::new();
 
     // Only start web server if requested
     if args.start_web {
-        info!("Starting webserver task");
+        debug!("Starting webserver task");
         let shutdown_rx = shutdown_tx.subscribe();
         tasks.push(tokio::spawn(async move {
             if let Err(e) = webserver_task(shutdown_rx).await {
-                tracing::error!("Webserver task error: {}", e);
+                error!("Webserver task error: {}", e);
             }
-            info!("Webserver task completed");
+            debug!("Webserver task completed");
         }));
     }
 
-    info!("Starting network manager task");
+    debug!("Starting network manager task");
     let shutdown_rx = shutdown_tx.subscribe();
     tasks.push(tokio::spawn(async move {
         if let Err(e) = network_manager_task(shutdown_rx, bootstrap_nodes).await {
-            tracing::error!("Network manager task error: {}", e);
+            error!("Network manager task error: {}", e);
         }
-        info!("Network manager task completed");
+        debug!("Network manager task completed");
     }));
 
-    info!("All tasks started, waiting for Ctrl+C...");
+    debug!("All tasks started, waiting for Ctrl+C...");
 
     // Wait for Ctrl+C
     tokio::signal::ctrl_c()
         .await
         .context("Failed to listen for ctrl-c")?;
+
     info!("Received Ctrl+C, initiating shutdown...");
 
     // Send shutdown signal to all tasks
@@ -134,20 +133,20 @@ async fn main() -> Result<()> {
         Ok(results) => {
             for result in results {
                 if let Err(e) = result {
-                    tracing::error!("Task panicked: {}", e);
+                    error!("Task panicked: {}", e);
                 }
             }
-            info!("All tasks completed successfully");
+            debug!("All tasks completed successfully");
         }
         Err(_) => {
-            tracing::warn!("Tasks did not complete within 5 seconds, forcing exit");
+            warn!("Tasks did not complete within 5 seconds, forcing exit");
         }
     }
 
     // Clean up database connection
-    info!("Closing database connection...");
+    debug!("Closing database connection...");
     if let Err(e) = db::close_db().await {
-        tracing::error!("Failed to close database cleanly: {}", e);
+        error!("Failed to close database cleanly: {}", e);
     }
 
     info!("Application shutdown complete");

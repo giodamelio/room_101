@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::select;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::db::{Event, EventType, Identity, Peer};
 use crate::utils::topic_id;
@@ -153,7 +153,7 @@ pub async fn network_manager_task(
     shutdown_rx: broadcast::Receiver<()>,
     bootstrap_nodes: Option<Vec<NodeId>>,
 ) -> Result<()> {
-    info!("Network manager starting...");
+    debug!("Network manager starting...");
 
     // Add bootstrap nodes to database if provided
     if let Some(nodes) = bootstrap_nodes {
@@ -165,7 +165,7 @@ pub async fn network_manager_task(
 
     // Get our identity from the db if it exists, otherwise generate one
     let identity = Identity::get_or_create().await?;
-    info!(
+    debug!(
         public_key = %identity.secret_key.public(),
         "Identity ready"
     );
@@ -230,9 +230,10 @@ pub async fn network_manager_task(
         )
         .await
         {
-            tracing::error!("Gossip setup task error: {}", e);
+            error!("Gossip setup task error: {}", e);
         }
-        info!("Gossip setup task completed");
+
+        trace!("Gossip setup task completed");
     }));
 
     // Peer message listener task
@@ -248,9 +249,10 @@ pub async fn network_manager_task(
         )
         .await
         {
-            tracing::error!("Peer message listener error: {}", e);
+            error!("Peer message listener error: {}", e);
         }
-        info!("Peer message listener completed");
+
+        trace!("Peer message listener completed");
     }));
 
     // Listener message sender task
@@ -265,9 +267,10 @@ pub async fn network_manager_task(
         )
         .await
         {
-            tracing::error!("Listener message sender error: {}", e);
+            error!("Listener message sender error: {}", e);
         }
-        info!("Listener message sender completed");
+
+        trace!("Listener message sender completed");
     }));
 
     // Heartbeat task
@@ -277,9 +280,10 @@ pub async fn network_manager_task(
         if let Err(e) =
             peer_message_heartbeat(heartbeat_shutdown_rx, heartbeat_identity, heartbeat_tx).await
         {
-            tracing::error!("Heartbeat task error: {}", e);
+            error!("Heartbeat task error: {}", e);
         }
-        info!("Heartbeat task completed");
+
+        trace!("Heartbeat task completed");
     }));
 
     // Heartbeat message sender task
@@ -294,40 +298,41 @@ pub async fn network_manager_task(
         )
         .await
         {
-            tracing::error!("Heartbeat message sender error: {}", e);
+            error!("Heartbeat message sender error: {}", e);
         }
-        info!("Heartbeat message sender completed");
+
+        trace!("Heartbeat message sender completed");
     }));
 
-    info!("Network manager running, all subtasks spawned. Waiting for shutdown...");
+    debug!("Network manager running, all subtasks spawned. Waiting for shutdown...");
 
     // Wait for shutdown signal
     let mut shutdown_rx = shutdown_rx;
     let _ = shutdown_rx.recv().await;
-    info!("Network manager received shutdown signal, cleaning up...");
+    trace!("Network manager received shutdown signal, cleaning up...");
 
     // Shutdown the gossip with timeout protection
-    info!("Shutting down gossip network...");
+    debug!("Shutting down gossip network...");
     match tokio::time::timeout(std::time::Duration::from_secs(5), gossip.shutdown()).await {
         Ok(result) => {
             result?;
-            info!("Gossip network shutdown complete");
+            debug!("Gossip network shutdown complete");
         }
         Err(_) => {
-            info!("Gossip network shutdown timed out after 5 seconds, forcing shutdown");
+            debug!("Gossip network shutdown timed out after 5 seconds, forcing shutdown");
         }
     }
 
     // Wait for all network subtasks to complete
-    info!("Waiting for network subtasks to complete...");
+    debug!("Waiting for network subtasks to complete...");
     let task_results = futures::future::join_all(tasks).await;
     for result in task_results {
         if let Err(e) = result {
-            tracing::error!("Network subtask panicked: {}", e);
+            error!("Network subtask panicked: {}", e);
         }
     }
 
-    info!("Network manager stopped cleanly");
+    debug!("Network manager stopped cleanly");
     Ok(())
 }
 
@@ -340,7 +345,7 @@ async fn gossip_setup_task(
     heartbeat_sender_gossip_tx: tokio::sync::oneshot::Sender<iroh_gossip::api::GossipSender>,
     listener_tx: mpsc::Sender<PeerMessage>,
 ) -> anyhow::Result<()> {
-    info!("Gossip setup task starting...");
+    debug!("Gossip setup task starting...");
 
     // Get known peers for gossip (let Iroh discover addressing via relay/DHT)
     let all_peer_ids = Peer::list_node_ids().await?;
@@ -352,7 +357,7 @@ async fn gossip_setup_task(
     debug!("Known peers for gossip discovery: {:?}", peers);
 
     // Subscribe to the peers topic with shutdown awareness
-    info!(
+    debug!(
         "Subscribing to gossip topic with {} known peers",
         peers.len()
     );
@@ -361,13 +366,13 @@ async fn gossip_setup_task(
             result.context("Failed to subscribe to gossip topic")
         }
         _ = shutdown_rx.recv() => {
-            info!("Gossip setup task received shutdown before subscription completed");
+            debug!("Gossip setup task received shutdown before subscription completed");
             return Ok(());
         }
     };
 
     let (peer_sender, peer_reciever) = gossip_result?.split();
-    info!("Successfully subscribed to gossip topic");
+    debug!("Successfully subscribed to gossip topic");
 
     // Send gossip handles to other tasks
     let _ = listener_gossip_tx.send(peer_reciever);
@@ -387,10 +392,10 @@ async fn gossip_setup_task(
 
     // Wait for shutdown
     let _ = shutdown_rx.recv().await;
-    info!("Gossip setup task received shutdown signal");
+    debug!("Gossip setup task received shutdown signal");
 
     // Send leaving message
-    info!("Sending leaving message...");
+    trace!("Sending leaving message...");
     match tokio::time::timeout(
         std::time::Duration::from_secs(1),
         send_peer_message(
@@ -405,14 +410,15 @@ async fn gossip_setup_task(
     {
         Ok(result) => {
             result?;
-            info!("Leaving message sent successfully");
+            debug!("Leaving message sent successfully");
         }
         Err(_) => {
-            info!("Leaving message send timed out, continuing shutdown");
+            debug!("Leaving message send timed out, continuing shutdown");
         }
     }
 
-    info!("Gossip setup task stopped cleanly");
+    debug!("Gossip setup task stopped cleanly");
+
     Ok(())
 }
 
@@ -422,7 +428,7 @@ async fn peer_message_listener_task(
     gossip_rx: tokio::sync::oneshot::Receiver<iroh_gossip::api::GossipReceiver>,
     peer_message_tx: mpsc::Sender<PeerMessage>,
 ) -> anyhow::Result<()> {
-    info!("Peer message listener starting...");
+    debug!("Peer message listener starting...");
 
     // Wait for gossip handles or shutdown
     let mut peer_reciever = select! {
@@ -430,12 +436,12 @@ async fn peer_message_listener_task(
             receiver.map_err(|_| anyhow::anyhow!("Gossip setup task dropped"))?
         }
         _ = shutdown_rx.recv() => {
-            info!("Peer message listener received shutdown before gossip ready");
+            debug!("Peer message listener received shutdown before gossip ready");
             return Ok(());
         }
     };
 
-    info!("Peer message listener got gossip receiver, starting message loop...");
+    debug!("Peer message listener got gossip receiver, starting message loop...");
 
     loop {
         select! {
@@ -512,13 +518,13 @@ async fn peer_message_listener_task(
                 }
             }
             _ = shutdown_rx.recv() => {
-                info!("Peer message listener received shutdown signal");
+                debug!("Peer message listener received shutdown signal");
                 break;
             }
         }
     }
 
-    info!("Peer message listener stopped");
+    debug!("Peer message listener stopped");
     Ok(())
 }
 
@@ -528,7 +534,7 @@ async fn peer_message_sender_task(
     mut peer_message_rx: mpsc::Receiver<PeerMessage>,
     identity: Identity,
 ) -> anyhow::Result<()> {
-    info!("Peer message sender starting...");
+    debug!("Peer message sender starting...");
 
     // Wait for gossip handles or shutdown
     let peer_sender = select! {
@@ -536,12 +542,12 @@ async fn peer_message_sender_task(
             sender.map_err(|_| anyhow::anyhow!("Gossip setup task dropped"))?
         }
         _ = shutdown_rx.recv() => {
-            info!("Peer message sender received shutdown before gossip ready");
+            debug!("Peer message sender received shutdown before gossip ready");
             return Ok(());
         }
     };
 
-    info!("Peer message sender got gossip sender, starting message loop...");
+    debug!("Peer message sender got gossip sender, starting message loop...");
 
     loop {
         select! {
@@ -555,13 +561,13 @@ async fn peer_message_sender_task(
                 .await?;
             }
             _ = shutdown_rx.recv() => {
-                info!("Peer message sender received shutdown signal");
+                debug!("Peer message sender received shutdown signal");
                 break
             }
         }
     }
 
-    info!("Peer message sender stopped");
+    debug!("Peer message sender stopped");
     Ok(())
 }
 
@@ -570,7 +576,7 @@ async fn peer_message_heartbeat(
     identity: Identity,
     peer_message_tx: mpsc::Sender<PeerMessage>,
 ) -> anyhow::Result<()> {
-    info!("Peer message heartbeat starting...");
+    debug!("Peer message heartbeat starting...");
     let mut ticker = tokio::time::interval(Duration::from_secs(10));
 
     loop {
@@ -586,12 +592,12 @@ async fn peer_message_heartbeat(
                     .await?;
             }
             _ = shutdown_rx.recv() => {
-                info!("Peer message heartbeat received shutdown signal");
+                debug!("Peer message heartbeat received shutdown signal");
                 break
             }
         }
     }
 
-    info!("Peer message heartbeat stopped");
+    debug!("Peer message heartbeat stopped");
     Ok(())
 }
