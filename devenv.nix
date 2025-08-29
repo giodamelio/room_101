@@ -42,6 +42,11 @@ in {
       after = ["db:reset"];
       exec = "sqlx database setup";
     };
+    "db:sqlx-prepare" = {
+      exec = "cargo sqlx prepare";
+      after = ["devenv:enterShell"];
+      execIfModified = ["migrations/"];
+    };
   };
 
   enterShell = ''
@@ -76,6 +81,15 @@ in {
     shellcheck = {
       enable = true;
       description = "Lint shell scripts with shellcheck";
+    };
+
+    # Ensure SQLx Metadata is up to date
+    sqlx-metadata = {
+      name = "SQLx Metadata Generation";
+      entry = "devenv tasks run db:sqlx-prepare";
+      files = "\\.sql$";
+      language = "system";
+      pass_filenames = false;
     };
 
     # General code quality

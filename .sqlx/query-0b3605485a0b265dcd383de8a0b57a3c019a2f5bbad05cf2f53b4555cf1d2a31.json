@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO peers (node_id, last_seen, hostname) VALUES (?, ?, ?)\n             ON CONFLICT(node_id) DO UPDATE SET\n             last_seen = COALESCE(excluded.last_seen, peers.last_seen),\n             hostname = COALESCE(excluded.hostname, peers.hostname)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "0b3605485a0b265dcd383de8a0b57a3c019a2f5bbad05cf2f53b4555cf1d2a31"
+}

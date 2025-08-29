@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO identities (secret_key, age_key) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "092ae7b6884bb790c6f0698ea9dff33e91f96c6ca9c354ae61c3f927bbf45229"
+}

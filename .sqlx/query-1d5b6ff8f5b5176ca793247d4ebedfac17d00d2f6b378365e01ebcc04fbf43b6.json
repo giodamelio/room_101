@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT node_id, last_seen, hostname FROM peers ORDER BY last_seen DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "node_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_seen",
+        "ordinal": 1,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "hostname",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "1d5b6ff8f5b5176ca793247d4ebedfac17d00d2f6b378365e01ebcc04fbf43b6"
+}

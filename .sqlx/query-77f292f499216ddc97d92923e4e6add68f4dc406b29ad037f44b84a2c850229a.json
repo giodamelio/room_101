@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT secret_key, age_key FROM identities LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "secret_key",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "age_key",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "77f292f499216ddc97d92923e4e6add68f4dc406b29ad037f44b84a2c850229a"
+}

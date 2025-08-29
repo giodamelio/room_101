@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT node_id FROM peers",
+  "describe": {
+    "columns": [
+      {
+        "name": "node_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "09d86162dae934da415cb2b6fd8a35e44f3fe4c3491f8b37ead9637e022b5256"
+}
