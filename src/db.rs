@@ -1,5 +1,7 @@
 use std::sync::OnceLock;
 
+use age::secrecy::ExposeSecret;
+use age::x25519::Identity as AgeIdentity;
 use anyhow::Result;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use iroh::{NodeId, SecretKey};
@@ -28,9 +30,106 @@ fn node_id_from_string(s: &str) -> Result<NodeId> {
     Ok(s.parse::<NodeId>()?)
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+fn age_identity_to_string(age_key: &AgeIdentity) -> String {
+    age_key.to_string().expose_secret().to_string()
+}
+
+fn age_identity_from_str(s: &str) -> Result<AgeIdentity, anyhow::Error> {
+    s.parse::<AgeIdentity>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse AgeIdentity: {}", e))
+}
+
+/// Custom serde serialization module for AgeIdentity
+///
+/// Provides safe serialization/deserialization for age::x25519::Identity using
+/// the built-in to_string() and from_str() methods. The age identity is serialized
+/// as a string in Bech32 format with "AGE-SECRET-KEY-1" prefix.
+mod age_identity_serde {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(age_key: &AgeIdentity, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        age_key.to_string().expose_secret().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<AgeIdentity, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<AgeIdentity>().map_err(serde::de::Error::custom)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_age_identity_serialize() {
+            let age_identity = AgeIdentity::generate();
+            let serialized =
+                serde_json::to_string(&age_identity.to_string().expose_secret()).unwrap();
+
+            // Verify it starts with the expected prefix in the serialized string
+            assert!(serialized.contains("AGE-SECRET-KEY-1"));
+        }
+
+        #[test]
+        fn test_age_identity_deserialize() {
+            let age_identity = AgeIdentity::generate();
+            let identity_string = age_identity.to_string().expose_secret().to_string();
+
+            // Test that we can parse it back
+            let parsed = identity_string.parse::<AgeIdentity>().unwrap();
+
+            // Verify they produce the same string representation
+            assert_eq!(
+                age_identity.to_string().expose_secret(),
+                parsed.to_string().expose_secret()
+            );
+        }
+
+        #[test]
+        fn test_age_identity_serde_roundtrip() {
+            let original = AgeIdentity::generate();
+
+            // Serialize
+            let mut serializer = serde_json::Serializer::new(Vec::new());
+            serialize(&original, &mut serializer).unwrap();
+            let serialized_bytes = serializer.into_inner();
+            let serialized_str = String::from_utf8(serialized_bytes).unwrap();
+
+            // Deserialize
+            let mut deserializer = serde_json::Deserializer::from_str(&serialized_str);
+            let deserialized = deserialize(&mut deserializer).unwrap();
+
+            // Verify round-trip equality
+            assert_eq!(
+                original.to_string().expose_secret(),
+                deserialized.to_string().expose_secret()
+            );
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Identity {
     pub secret_key: SecretKey,
+    #[serde(with = "age_identity_serde")]
+    pub age_key: AgeIdentity,
+}
+
+impl std::fmt::Debug for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Identity")
+            .field("secret_key", &"[SecretKey]")
+            .field("age_key", &"[AgePrivateKey]")
+            .finish()
+    }
 }
 
 impl Identity {
@@ -38,6 +137,7 @@ impl Identity {
         debug!("Generating new identity with random secret key");
         let identity = Self {
             secret_key: SecretKey::generate(rngs::OsRng),
+            age_key: AgeIdentity::generate(),
         };
         debug!(public_key = %identity.secret_key.public(), "Generated new identity");
         identity
@@ -51,21 +151,32 @@ impl Identity {
         let db = get_db();
 
         // Try to get existing identity
-        let row = sqlx::query!("SELECT secret_key FROM identities LIMIT 1")
+        let row = sqlx::query!("SELECT secret_key, age_key FROM identities LIMIT 1")
             .fetch_optional(db)
             .await?;
 
         if let Some(row) = row {
             let secret_key = secret_key_from_hex(&row.secret_key)?;
-            Ok(Self { secret_key })
+            let age_key = if let Some(age_key_str) = &row.age_key {
+                age_identity_from_str(age_key_str)?
+            } else {
+                // Handle legacy case where age_key might be NULL
+                AgeIdentity::generate()
+            };
+            Ok(Self {
+                secret_key,
+                age_key,
+            })
         } else {
             // Create new identity
             let new_identity = Self::new();
 
             let secret_key_hex = secret_key_to_hex(&new_identity.secret_key);
+            let age_key_str = age_identity_to_string(&new_identity.age_key);
             sqlx::query!(
-                "INSERT INTO identities (secret_key) VALUES (?)",
-                secret_key_hex
+                "INSERT INTO identities (secret_key, age_key) VALUES (?, ?)",
+                secret_key_hex,
+                age_key_str
             )
             .execute(db)
             .await?;

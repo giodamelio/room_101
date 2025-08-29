@@ -28,3 +28,4 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "uuid
 uuid = { version = "1.18.0", features = ["serde"]}
 itertools = "0.13"
 futures = "0.3"
+age = "0.11.1"
