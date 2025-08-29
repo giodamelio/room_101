@@ -60,6 +60,14 @@ This project uses devenv.nix for reproducible development environments with:
 - Pre-commit hooks for code formatting (treefmt), linting (clippy), and SQLx metadata generation
 - Task automation for database operations
 
+## Project Planning
+- Check `TODO.md` for current feature roadmap and implementation status
+- This application focuses on cryptographic secrets management in a P2P network
+
+## Testing
+- Preferred test runner: `cargo nextest run` (faster than `cargo test`)
+- Tests automatically run via `enterTest` in devenv configuration
+
 ## Rust Development Workflow
 - Call `cargo check` before finishing any task where you modified Rust source files.
 - Use inlined format arguments in `format!()` macros (e.g., `format!("Hello {name}")` instead of `format!("Hello {}", name)`) to pass clippy linting.
