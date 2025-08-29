@@ -3,21 +3,23 @@ use std::marker::PhantomData;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ed25519_dalek::Signature;
 use iroh::{Endpoint, NodeId, Watcher, protocol::Router};
 use iroh::{PublicKey, SecretKey};
 use iroh_gossip::api::{GossipReceiver, GossipSender};
 use iroh_gossip::{ALPN, net::Gossip, proto::TopicId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use surrealdb::Datetime;
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, trace};
 
-use crate::db::{self, Event, EventType, Identity};
+use crate::db::{
+    self,
+    data::{Event, EventType, Identity},
+};
 use crate::utils::topic_id;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -67,19 +69,25 @@ pub enum PeerMessage {
     #[serde(rename = "JOINED")]
     Joined {
         node_id: NodeId,
-        time: Datetime,
+        time: DateTime<Utc>,
         hostname: Option<String>,
     },
     #[serde(rename = "LEAVING")]
-    Leaving { node_id: NodeId, time: Datetime },
+    Leaving {
+        node_id: NodeId,
+        time: DateTime<Utc>,
+    },
     #[serde(rename = "INTRODUCTION")]
     Introduction {
         node_id: NodeId,
-        time: Datetime,
+        time: DateTime<Utc>,
         hostname: Option<String>,
     },
     #[serde(rename = "HEARTBEAT")]
-    Heartbeat { node_id: NodeId, time: Datetime },
+    Heartbeat {
+        node_id: NodeId,
+        time: DateTime<Utc>,
+    },
 }
 
 impl Display for PeerMessage {
@@ -138,50 +146,22 @@ pub async fn iroh_subsystem(
     // Add bootstrap nodes to database if provided
     if let Some(nodes) = bootstrap_nodes {
         info!("Adding {} bootstrap nodes to database", nodes.len());
-        db::Peer::add_peers(nodes)
+        db::data::Peer::insert_bootstrap_nodes(nodes)
             .await
             .context("Failed to add bootstrap nodes to database")?;
     }
 
     // Get our identity from the db if it exists, otherwise generate one
-    let identity: Option<db::Identity> = db::db()
-        .await
-        .select(("config", "identity"))
-        .await
-        .context("Failed to load identity from database")?;
-
-    let identity = match identity {
-        Some(identity) => {
-            info!(
-                public_key = %identity.secret_key.public(),
-                "Loaded existing identity from database"
-            );
-            identity
-        }
-        None => {
-            let new_identity = db::Identity::new();
-
-            // Write the new identity
-            let _: Option<db::Identity> = db::db()
-                .await
-                .create(("config", "identity"))
-                .content(new_identity.clone())
-                .await
-                .context("Failed to save identity to database")?;
-
-            info!(
-                public_key = %new_identity.secret_key.public(),
-                "Created new identity and saved to database"
-            );
-
-            new_identity
-        }
-    };
+    let identity = Identity::get_or_create().await?;
+    info!(
+        public_key = %identity.secret_key.public(),
+        "Identity ready"
+    );
 
     // Create endpoint for this node
     debug!("Creating iroh endpoint with identity");
     let endpoint = Endpoint::builder()
-        .secret_key(identity.clone().secret_key)
+        .secret_key(identity.secret_key.inner().clone())
         .discovery_n0()
         .bind()
         .await
@@ -207,10 +187,9 @@ pub async fn iroh_subsystem(
         .spawn();
 
     // Get known peers for gossip (let Iroh discover addressing via relay/DHT)
-    let peers: Vec<NodeId> = db::Peer::list()
-        .await?
-        .iter()
-        .map(|p| p.node_id)
+    let all_peer_ids = db::data::Peer::list_node_ids().await?;
+    let peers: Vec<NodeId> = all_peer_ids
+        .into_iter()
         .filter(|&peer_id| peer_id != identity.id()) // Don't include ourself
         .collect();
 
@@ -267,7 +246,7 @@ pub async fn iroh_subsystem(
         peer_message_tx.clone(),
         PeerMessage::Joined {
             node_id: identity.id(),
-            time: Datetime::from(Utc::now()),
+            time: Utc::now(),
             hostname: get_hostname(),
         },
     )
@@ -282,7 +261,7 @@ pub async fn iroh_subsystem(
         peer_message_tx.clone(),
         PeerMessage::Leaving {
             node_id: identity.id(),
-            time: Datetime::from(Utc::now()),
+            time: Utc::now(),
         },
     )
     .await?;
@@ -320,9 +299,9 @@ async fn peer_message_handler(
 
                     // Add the peer to the database
                     if let Err(e) =
-                        db::Peer::upsert_peer(node_id, Some(time), hostname.clone()).await
+                        db::data::Peer::upsert_peer(node_id, Some(time), hostname.clone()).await
                     {
-                        debug!("Failed to add peer {node_id} to database: {e}");
+                        debug!("Failed to upsert peer {node_id} to database: {e}");
                     }
 
                     // Send an introduction to the network
@@ -330,7 +309,7 @@ async fn peer_message_handler(
                         peer_message_tx.clone(),
                         PeerMessage::Introduction {
                             node_id: identity.id(),
-                            time: Datetime::from(Utc::now()),
+                            time: Utc::now(),
                             hostname,
                         },
                     )
@@ -340,7 +319,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Leaving");
 
                     // Update last_seen time when they leave
-                    if let Err(e) = db::Peer::upsert_peer(node_id, Some(time), None).await {
+                    if let Err(e) = db::data::Peer::upsert_peer(node_id, Some(time), None).await {
                         debug!("Failed to update peer {node_id} last_seen time: {e}");
                     }
                 }
@@ -348,7 +327,7 @@ async fn peer_message_handler(
                     trace!(%node_id, %time, "Handling PeerMessage::Heartbeat");
 
                     // Update last_seen time on heartbeat
-                    if let Err(e) = db::Peer::upsert_peer(node_id, Some(time), None).await {
+                    if let Err(e) = db::data::Peer::upsert_peer(node_id, Some(time), None).await {
                         debug!("Failed to update peer {node_id} heartbeat time: {e}");
                     }
                 }
@@ -368,11 +347,11 @@ async fn peer_message_handler(
                     )
                     .await?;
 
-                    // Update last_seen time on heartbeat
+                    // Update last_seen time on introduction
                     if let Err(e) =
-                        db::Peer::upsert_peer(*node_id, Some(time.clone()), hostname.clone()).await
+                        db::data::Peer::upsert_peer(*node_id, Some(*time), hostname.clone()).await
                     {
-                        debug!("Failed to update peer {node_id} heartbeat time: {e}");
+                        debug!("Failed to update peer {node_id} introduction time: {e}");
                     }
                 }
             }
@@ -394,7 +373,7 @@ async fn peer_message_sender(
                 peer_sender
                     .broadcast(
                         message
-                            .sign(&identity.secret_key)?
+                            .sign(identity.secret_key.inner())?
                             .into(),
                     )
                 .await?;
@@ -422,7 +401,7 @@ async fn peer_message_heartbeat(
                         peer_message_tx.clone(),
                     PeerMessage::Heartbeat {
                         node_id: identity.id(),
-                        time: Datetime::from(Utc::now()),
+                        time: Utc::now(),
                     }
                     )
                     .await?;

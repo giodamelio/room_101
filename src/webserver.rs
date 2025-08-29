@@ -4,23 +4,17 @@ use iroh::NodeId;
 use maud::{DOCTYPE, Markup, html};
 use poem::{Endpoint, EndpointExt, Route, Server, get, handler, listener::TcpListener, web::Form};
 use serde::Deserialize;
-use surrealdb::Datetime;
 use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::info;
 
 use crate::{
-    db::{Event, Peer},
+    db::data::{Event, EventType, Peer},
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
 };
 
-fn format_relative_time(datetime: &Datetime) -> String {
-    // Use serde to serialize to a clean format
-    let serialized = serde_json::to_string(datetime).unwrap();
-    // Remove quotes from the JSON string
-    let cleaned = serialized.trim_matches('"');
-    let dt = cleaned.parse::<DateTime<Utc>>().unwrap();
-    HumanTime::from(dt).to_string()
+fn format_relative_time(datetime: &DateTime<Utc>) -> String {
+    HumanTime::from(*datetime).to_string()
 }
 
 fn layout(content: Markup) -> Markup {
@@ -141,7 +135,7 @@ fn tmpl_event_list(events: &Vec<Event>) -> Markup {
                         }
                         td style="border: 1px solid #ddd; padding: 8px;" {
                             @match &event.event_type {
-                                crate::db::EventType::PeerMessage { .. } => {
+                                EventType::PeerMessage { .. } => {
                                     span style="background: #e3f2fd; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
                                         "PeerMessage"
                                     }
@@ -150,7 +144,7 @@ fn tmpl_event_list(events: &Vec<Event>) -> Markup {
                         }
                         td style="border: 1px solid #ddd; padding: 8px;" {
                             @match &event.event_type {
-                                crate::db::EventType::PeerMessage { message_type } => {
+                                EventType::PeerMessage { message_type } => {
                                     span style="background: #f3e5f5; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
                                         (message_type)
                                     }

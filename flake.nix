@@ -28,7 +28,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    process-compose-flake.url = "github:Platonic-Systems/process-compose-flake";
     services-flake.url = "github:juspay/services-flake";
   };
 
@@ -39,7 +38,6 @@
       imports = [
         inputs.treefmt-nix.flakeModule
         inputs.git-hooks-nix.flakeModule
-        inputs.process-compose-flake.flakeModule
       ];
 
       perSystem = {
@@ -174,16 +172,6 @@
           config.allowUnfree = true;
         };
 
-        process-compose.database = {
-          imports = [
-            inputs.services-flake.processComposeModules.default
-          ];
-
-          settings.processes.surrealdb = {
-            command = "${lib.getExe pkgs.surrealdb} start --username dbaccess --password=reallybadpassword1";
-          };
-        };
-
         # Flake checks (equivalent to .claude/ hook scripts)
         checks = {
           # Rust compilation check
@@ -298,9 +286,6 @@
 
               # Rust hotreloading web server helper
               trunk
-
-              # SurrealDB database
-              surrealdb
 
               # Mold fast linker
               mold

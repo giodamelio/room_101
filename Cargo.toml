@@ -12,7 +12,6 @@ thiserror = "2.0.12"
 tokio = { version = "1.47.1", features = ["full"] }
 tokio-graceful-shutdown = "0.16.0"
 hex = "0.4"
-surrealdb = { version = "2.3.7", features = ["kv-surrealkv", "kv-mem", "protocol-ws", "protocol-http"] }
 serde = { version = "1.0.219", features = ["derive"] }
 rand = "0.8.5"
 tracing = "0.1"
@@ -22,8 +21,12 @@ maud = { version = "0.27.0", features = ["poem"] }
 url = "2.5.4"
 ed25519-dalek = "2.2.0"
 serde_json = "1.0.142"
-chrono = "0.4.41"
+chrono = { version = "0.4.41", features = ["serde"] }
 tokio-stream = "0.1.17"
 clap = { version = "4.5.44", features = ["derive"] }
 chrono-humanize = "0.2.3"
 hostname = "0.4"
+native_db = "0.8.2"
+native_model = "0.4.20"
+uuid = { version = "1.18.0", features = ["serde"]}
+itertools = "0.13"

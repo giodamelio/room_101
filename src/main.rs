@@ -58,7 +58,8 @@ async fn main() -> Result<()> {
 
     info!("Starting Room 101");
 
-    // Database will be initialized on first use
+    // Initialize the global database
+    db::init_db().context("Failed to initialize database")?;
 
     // Parse bootstrap node strings into NodeIDs
     let bootstrap_nodes = if args.bootstrap.is_empty() {
