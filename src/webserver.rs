@@ -12,7 +12,7 @@ use tracing::{debug, error};
 use url::form_urlencoded;
 
 use crate::{
-    db::{Event, EventType, Identity, Peer, Secret, decrypt_secret_for_identity},
+    db::{Event, EventType, GroupedSecret, Identity, Peer, Secret, decrypt_secret_for_identity},
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
     network::{PeerMessage, announce_secret},
@@ -270,7 +270,11 @@ fn tmpl_list_events(events: Vec<Event>) -> Markup {
     })
 }
 
-fn tmpl_secret_list(secrets: &[Secret], current_node_id: NodeId, peers: &[Peer]) -> Markup {
+fn tmpl_grouped_secret_list(
+    grouped_secrets: &[GroupedSecret],
+    current_node_id: NodeId,
+    peers: &[Peer],
+) -> Markup {
     // Create a map of node_id to hostname for easy lookup
     let peer_hostnames: std::collections::HashMap<String, Option<String>> = peers
         .iter()
@@ -278,7 +282,7 @@ fn tmpl_secret_list(secrets: &[Secret], current_node_id: NodeId, peers: &[Peer])
         .collect();
 
     html! {
-        @if secrets.is_empty() {
+        @if grouped_secrets.is_empty() {
             div style="text-align: center; padding: 40px; background: white; border-radius: 8px; border: 1px solid #ddd;" {
                 div style="font-size: 3em; margin-bottom: 16px; color: #999;" { "🔐" }
                 h3 style="margin: 0 0 8px 0; color: #666;" { "No secrets stored" }
@@ -286,21 +290,21 @@ fn tmpl_secret_list(secrets: &[Secret], current_node_id: NodeId, peers: &[Peer])
             }
         } @else {
             div id="secret-list" style="display: flex; flex-direction: column; gap: 16px;" {
-                @for secret in secrets {
+                @for grouped_secret in grouped_secrets {
                     div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" {
                         div style="display: flex; align-items: center; margin-bottom: 12px;" {
-                            @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
+                            @if grouped_secret.has_target_node(&current_node_id) {
                                 span style="font-size: 1.5em; margin-right: 8px;" { "🔑" }
                             } @else {
                                 span style="font-size: 1.5em; margin-right: 8px;" { "🔒" }
                             }
                             div style="flex: 1;" {
-                                a href=(format!("/secrets/{}/{}", secret.name, secret.target_node_id))
+                                a href=(format!("/secrets/{}/{}", grouped_secret.name, grouped_secret.hash))
                                   style="font-weight: bold; font-size: 1.1em; color: #2563eb; text-decoration: none;" {
-                                    (secret.name)
+                                    (grouped_secret.name)
                                 }
                             }
-                            @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
+                            @if grouped_secret.has_target_node(&current_node_id) {
                                 span style="background: #dcfce7; color: #166534; padding: 2px 8px; border-radius: 12px; font-size: 0.8em;" {
                                     "For You"
                                 }
@@ -313,12 +317,16 @@ fn tmpl_secret_list(secrets: &[Secret], current_node_id: NodeId, peers: &[Peer])
 
                         div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #666;" {
                             span style="margin-right: 6px;" { "🎯" }
-                            span { "Target: " }
-                            code style="background: #f1f5f9; padding: 2px 4px; border-radius: 3px; font-size: 0.8em;" {
-                                (secret.target_node_id)
-                            }
-                            @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
-                                span style="margin-left: 8px; color: #059669;" { "(" (hostname) ")" }
+                            span { "Targets: " }
+                            div style="display: flex; flex-wrap: wrap; gap: 4px;" {
+                                @for target_node_id in grouped_secret.get_target_node_ids() {
+                                    div style="background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 0.8em;" {
+                                        code { (target_node_id) }
+                                        @if let Some(hostname) = peer_hostnames.get(&target_node_id).and_then(|h| h.as_ref()) {
+                                            span style="color: #059669; margin-left: 4px;" { "(" (hostname) ")" }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -326,13 +334,13 @@ fn tmpl_secret_list(secrets: &[Secret], current_node_id: NodeId, peers: &[Peer])
                             span style="margin-right: 6px;" { "🏷️" }
                             span { "Hash: " }
                             code style="background: #f1f5f9; padding: 2px 4px; border-radius: 3px; font-size: 0.8em; word-break: break-all;" {
-                                (secret.hash)
+                                (grouped_secret.hash)
                             }
                         }
 
                         div style="display: flex; justify-content: space-between; font-size: 0.8em; color: #888;" {
-                            span { "Created " (format_relative_time(&secret.get_created_at_utc())) }
-                            span { "Updated " (format_relative_time(&secret.get_updated_at_utc())) }
+                            span { "Created " (format_relative_time(&grouped_secret.get_created_at_utc())) }
+                            span { "Updated " (format_relative_time(&grouped_secret.get_updated_at_utc())) }
                         }
                     }
                 }
@@ -341,14 +349,18 @@ fn tmpl_secret_list(secrets: &[Secret], current_node_id: NodeId, peers: &[Peer])
     }
 }
 
-fn tmpl_list_secrets(secrets: Vec<Secret>, current_node_id: NodeId, peers: Vec<Peer>) -> Markup {
+fn tmpl_list_grouped_secrets(
+    grouped_secrets: Vec<GroupedSecret>,
+    current_node_id: NodeId,
+    peers: Vec<Peer>,
+) -> Markup {
     layout(html! {
         nav style="margin-bottom: 20px;" {
             a href="/" { "← Home" }
         }
 
         h1 { "Secrets" }
-        (tmpl_secret_list(&secrets, current_node_id, &peers))
+        (tmpl_grouped_secret_list(&grouped_secrets, current_node_id, &peers))
 
         h2 { "Add New Secret" }
         div style="margin-top: 20px;" {
@@ -378,7 +390,7 @@ async fn list_events() -> Result<Markup> {
 
 #[handler]
 async fn list_secrets() -> Result<Markup> {
-    let secrets = Secret::list_all()
+    let grouped_secrets = Secret::list_all_grouped()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let peers = Peer::list()
@@ -386,9 +398,102 @@ async fn list_secrets() -> Result<Markup> {
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let identity = get_current_identity().await?;
 
-    Ok(tmpl_list_secrets(secrets, identity.id(), peers))
+    Ok(tmpl_list_grouped_secrets(
+        grouped_secrets,
+        identity.id(),
+        peers,
+    ))
 }
 
+fn tmpl_secret_detail_grouped(
+    secrets: &[Secret],
+    current_node_id: NodeId,
+    peers: Vec<Peer>,
+) -> Markup {
+    let secret = &secrets[0]; // All secrets have same name/hash, use first for metadata
+    let is_for_current_node = secrets.iter().any(|s| {
+        s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == current_node_id
+    });
+
+    // Create hostname lookup map
+    let peer_hostnames: std::collections::HashMap<String, Option<String>> = peers
+        .iter()
+        .map(|p| (p.node_id.clone(), p.hostname.clone()))
+        .collect();
+
+    layout(html! {
+        nav style="margin-bottom: 20px;" {
+            a href="/secrets" { "← Back to Secrets" }
+        }
+
+        h1 { "Secret: " (secret.name) }
+
+        div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;" {
+            div style="display: grid; gap: 16px;" {
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Name" }
+                    code style="background: #f1f5f9; padding: 8px; border-radius: 4px; display: block; font-size: 1.1em;" {
+                        (secret.name)
+                    }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Target Nodes" }
+                    div style="display: flex; flex-wrap: wrap; gap: 8px;" {
+                        @for secret in secrets {
+                            div style="background: #f1f5f9; padding: 8px 12px; border-radius: 4px; border: 1px solid #e2e8f0;" {
+                                code { (secret.target_node_id) }
+                                @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
+                                    span style="color: #059669; margin-left: 8px;" { "(" (hostname) ")" }
+                                }
+                                @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
+                                    span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 8px;" {
+                                        "YOU"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Hash" }
+                    code style="background: #f1f5f9; padding: 8px; border-radius: 4px; display: block; word-break: break-all;" {
+                        (secret.hash)
+                    }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Created" }
+                    span style="color: #6b7280;" { (format_relative_time(&secret.get_created_at_utc())) }
+                }
+
+                div {
+                    label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Last Updated" }
+                    span style="color: #6b7280;" { (format_relative_time(&secret.get_updated_at_utc())) }
+                }
+
+                @if is_for_current_node {
+                    div {
+                        label style="font-weight: bold; color: #374151; display: block; margin-bottom: 8px;" { "Encrypted Content" }
+                        button
+                            hx-post=(format!("/secrets/{}/{}/reveal", secret.name, secret.hash))
+                            hx-target="#secret-content"
+                            style="padding: 8px 16px; background: #059669; color: white; border: none; border-radius: 4px; cursor: pointer;"
+                        {
+                            "🔓 Reveal Secret"
+                        }
+                        div id="secret-content" style="margin-top: 12px;" {
+                            // Content will be loaded here by htmx
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+#[allow(dead_code)] // Replaced by tmpl_grouped_secret_detail, kept for reference
 fn tmpl_secret_detail(
     secret: &Secret,
     current_node_id: NodeId,
@@ -461,7 +566,7 @@ fn tmpl_secret_detail(
 
                 div id="secret-content" {
                     button
-                        hx-post=(format!("/secrets/{}/{}/reveal", secret.name, secret.target_node_id))
+                        hx-post=(format!("/secrets/{}/{}/reveal", secret.name, secret.hash))
                         hx-target="#secret-content"
                         hx-swap="innerHTML"
                         style="background: #d97706; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;" {
@@ -482,65 +587,41 @@ fn tmpl_secret_detail(
 
 #[handler]
 async fn get_secret_detail(
-    poem::web::Path((name, target_node_id)): poem::web::Path<(String, String)>,
+    poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
 ) -> Result<Markup> {
-    let target_node_id = target_node_id
-        .parse::<NodeId>()
-        .map_err(|e| AppError::BadRequest(format!("Invalid node ID: {e}")))?;
-
-    let secrets = Secret::list_all()
+    let secrets = Secret::find_by_name_and_hash(&name, &hash)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let secret = secrets
-        .into_iter()
-        .find(|s| {
-            s.name == name
-                && s.get_target_node_id().is_ok()
-                && s.get_target_node_id().unwrap() == target_node_id
-        })
-        .ok_or_else(|| AppError::NotFound("Secret not found".to_string()))?;
+
+    if secrets.is_empty() {
+        return Err(AppError::NotFound("Secret not found".to_string()));
+    }
 
     let peers = Peer::list()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let peer_hostname = peers
-        .iter()
-        .find(|p| p.node_id == secret.target_node_id)
-        .and_then(|p| p.hostname.clone());
-
     let identity = get_current_identity().await?;
 
-    Ok(tmpl_secret_detail(&secret, identity.id(), peer_hostname))
+    Ok(tmpl_secret_detail_grouped(&secrets, identity.id(), peers))
 }
 
 #[handler]
 async fn reveal_secret(
-    poem::web::Path((name, target_node_id)): poem::web::Path<(String, String)>,
+    poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
 ) -> Result<Markup> {
-    let target_node_id = target_node_id
-        .parse::<NodeId>()
-        .map_err(|e| AppError::BadRequest(format!("Invalid node ID: {e}")))?;
-
     let identity = get_current_identity().await?;
 
-    // Only allow revealing secrets for the current node
-    if target_node_id != identity.id() {
-        return Err(AppError::Forbidden(
-            "Cannot reveal secrets for other nodes".to_string(),
-        ));
-    }
-
-    let secrets = Secret::list_all()
+    let secrets = Secret::find_by_name_and_hash(&name, &hash)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Find the secret meant for the current node
     let secret = secrets
         .into_iter()
         .find(|s| {
-            s.name == name
-                && s.get_target_node_id().is_ok()
-                && s.get_target_node_id().unwrap() == target_node_id
+            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == identity.id()
         })
-        .ok_or_else(|| AppError::NotFound("Secret not found".to_string()))?;
+        .ok_or_else(|| AppError::Forbidden("No secret found for your node".to_string()))?;
 
     let decrypted_content = decrypt_secret_for_identity(&secret.encrypted_data, &identity)
         .await
@@ -557,7 +638,7 @@ async fn reveal_secret(
             }
         }
         button
-            hx-post=(format!("/secrets/{}/{}/hide", secret.name, secret.target_node_id))
+            hx-post=(format!("/secrets/{}/{}/hide", secret.name, secret.hash))
             hx-target="#secret-content"
             hx-swap="innerHTML"
             style="background: #6b7280; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;" {
@@ -573,11 +654,11 @@ async fn reveal_secret(
 
 #[handler]
 async fn hide_secret(
-    poem::web::Path((name, target_node_id)): poem::web::Path<(String, String)>,
+    poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
 ) -> Result<Markup> {
     Ok(html! {
         button
-            hx-post=(format!("/secrets/{}/{}/reveal", name, target_node_id))
+            hx-post=(format!("/secrets/{}/{}/reveal", name, hash))
             hx-target="#secret-content"
             hx-swap="innerHTML"
             style="background: #d97706; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;" {
@@ -803,7 +884,7 @@ async fn create_secret(
     }
 
     // Redirect to secrets list
-    let secrets = Secret::list_all()
+    let grouped_secrets = Secret::list_all_grouped()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let peers = Peer::list()
@@ -811,7 +892,11 @@ async fn create_secret(
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let identity = get_current_identity().await?;
 
-    Ok(tmpl_list_secrets(secrets, identity.id(), peers))
+    Ok(tmpl_list_grouped_secrets(
+        grouped_secrets,
+        identity.id(),
+        peers,
+    ))
 }
 
 #[derive(Deserialize, Debug)]
@@ -843,15 +928,9 @@ pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
         .at("/events", get(list_events))
         .at("/secrets", get(list_secrets).post(create_secret))
         .at("/secrets/new", get(add_secret_form))
-        .at("/secrets/:name/:target_node_id", get(get_secret_detail))
-        .at(
-            "/secrets/:name/:target_node_id/reveal",
-            poem::post(reveal_secret),
-        )
-        .at(
-            "/secrets/:name/:target_node_id/hide",
-            poem::post(hide_secret),
-        )
+        .at("/secrets/:name/:hash", get(get_secret_detail))
+        .at("/secrets/:name/:hash/reveal", poem::post(reveal_secret))
+        .at("/secrets/:name/:hash/hide", poem::post(hide_secret))
         .data(peer_message_tx)
         .with(HtmxErrorMiddleware)
 }

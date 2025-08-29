@@ -476,6 +476,39 @@ pub struct Secret {
     pub updated_at: NaiveDateTime,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct GroupedSecret {
+    pub name: String,
+    pub hash: String,
+    pub target_node_ids: String, // Comma-separated list from GROUP_CONCAT
+    #[allow(dead_code)] // Keep for consistency with SQL schema
+    pub encrypted_data: Vec<u8>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+impl GroupedSecret {
+    pub fn get_target_node_ids(&self) -> Vec<String> {
+        self.target_node_ids
+            .split(',')
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    pub fn has_target_node(&self, target_node_id: &NodeId) -> bool {
+        let target_str = node_id_to_string(target_node_id);
+        self.get_target_node_ids().contains(&target_str)
+    }
+
+    pub fn get_created_at_utc(&self) -> DateTime<Utc> {
+        DateTime::from_naive_utc_and_offset(self.created_at, Utc)
+    }
+
+    pub fn get_updated_at_utc(&self) -> DateTime<Utc> {
+        DateTime::from_naive_utc_and_offset(self.updated_at, Utc)
+    }
+}
+
 impl Secret {
     pub async fn create(
         name: String,
@@ -484,8 +517,8 @@ impl Secret {
     ) -> Result<Self> {
         validate_secret_name(&name)?;
 
+        let hash = compute_hash(secret_content);
         let encrypted_data = encrypt_secret_for_node(secret_content, target_node_id).await?;
-        let hash = compute_hash(&encrypted_data);
         let target_node_id_str = node_id_to_string(&target_node_id);
         let now = Utc::now().naive_utc();
 
@@ -603,6 +636,57 @@ impl Secret {
             Secret,
             "SELECT name, encrypted_data, hash, target_node_id, created_at, updated_at
              FROM secrets ORDER BY updated_at DESC"
+        )
+        .fetch_all(db)
+        .await?;
+
+        Ok(secrets)
+    }
+
+    pub async fn list_all_grouped() -> Result<Vec<GroupedSecret>> {
+        let db = get_db();
+
+        let rows = sqlx::query!(
+            "SELECT
+                name,
+                hash,
+                GROUP_CONCAT(target_node_id) as \"target_node_ids!\",
+                encrypted_data,
+                MIN(created_at) as created_at,
+                MAX(updated_at) as updated_at
+             FROM secrets
+             GROUP BY name, hash
+             ORDER BY MAX(updated_at) DESC"
+        )
+        .fetch_all(db)
+        .await?;
+
+        let mut grouped_secrets = Vec::new();
+        for row in rows {
+            grouped_secrets.push(GroupedSecret {
+                name: row.name.unwrap_or_default(),
+                hash: row.hash.unwrap_or_default(),
+                target_node_ids: row.target_node_ids,
+                encrypted_data: row.encrypted_data.unwrap_or_default(),
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            });
+        }
+
+        Ok(grouped_secrets)
+    }
+
+    pub async fn find_by_name_and_hash(name: &str, hash: &str) -> Result<Vec<Self>> {
+        let db = get_db();
+
+        let secrets = sqlx::query_as!(
+            Secret,
+            "SELECT name, encrypted_data, hash, target_node_id, created_at, updated_at
+             FROM secrets
+             WHERE name = ? AND hash = ?
+             ORDER BY target_node_id",
+            name,
+            hash
         )
         .fetch_all(db)
         .await?;
