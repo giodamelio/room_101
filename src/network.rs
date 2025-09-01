@@ -287,7 +287,7 @@ pub async fn sync_all_secrets_to_systemd() -> Result<()> {
         my_secrets.len()
     );
 
-    let config = crate::get_systemd_secrets_config();
+    let config = crate::get_systemd_secrets_config()?;
     let mut success_count = 0;
     let mut error_count = 0;
 
@@ -344,7 +344,7 @@ pub async fn send_secret_sync_request(
         EventType::PeerMessage {
             message_type: "SECRET_SYNC_REQUEST".to_string(),
         },
-        format!("Sending secret sync request to node {}", target_node_id),
+        format!("Sending secret sync request to node {target_node_id}"),
         serde_json::to_value(&sync_request).ok(),
     )
     .await?;
@@ -912,7 +912,7 @@ async fn peer_message_listener_task(
                             EventType::PeerMessage {
                                 message_type: message.to_string(),
                             },
-                            format!("Processed secret sync request from {}", _from),
+                            format!("Processed secret sync request from {_from}"),
                             serde_json::to_value(message.clone()).ok(),
                         )
                         .await?;

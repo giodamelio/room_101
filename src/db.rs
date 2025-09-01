@@ -157,7 +157,7 @@ impl Identity {
     }
 
     pub async fn get() -> anyhow::Result<Self> {
-        let db = get_db();
+        let db = get_db()?;
 
         // Try to get existing identity
         let row = sqlx::query!("SELECT secret_key, age_key FROM identities LIMIT 1")
@@ -184,7 +184,7 @@ impl Identity {
     }
 
     pub async fn get_or_create() -> anyhow::Result<Self> {
-        let db = get_db();
+        let db = get_db()?;
 
         // Try to get existing identity
         let row = sqlx::query!("SELECT secret_key, age_key FROM identities LIMIT 1")
@@ -236,7 +236,7 @@ pub struct Peer {
 
 impl Peer {
     pub async fn list() -> anyhow::Result<Vec<Self>> {
-        let db = get_db();
+        let db = get_db()?;
         let peers = sqlx::query_as!(
             Peer,
             "SELECT node_id, last_seen, hostname, age_public_key FROM peers ORDER BY last_seen DESC"
@@ -252,7 +252,7 @@ impl Peer {
     }
 
     pub async fn create(node_id: NodeId) -> anyhow::Result<()> {
-        let db = get_db();
+        let db = get_db()?;
         let node_id_str = node_id_to_string(&node_id);
         sqlx::query!(
             "INSERT INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)",
@@ -272,7 +272,7 @@ impl Peer {
         hostname: Option<String>,
         age_public_key: Option<String>,
     ) -> anyhow::Result<()> {
-        let db = get_db();
+        let db = get_db()?;
         let node_id_str = node_id_to_string(&node_id);
         let last_seen_naive = last_seen.map(|dt| dt.naive_utc());
         sqlx::query!(
@@ -292,7 +292,7 @@ impl Peer {
     }
 
     pub async fn insert_bootstrap_nodes(nodes: Vec<NodeId>) -> anyhow::Result<()> {
-        let db = get_db();
+        let db = get_db()?;
         let mut tx = db.begin().await?;
 
         for node_id in nodes {
@@ -313,7 +313,7 @@ impl Peer {
     }
 
     pub async fn list_node_ids() -> anyhow::Result<Vec<NodeId>> {
-        let db = get_db();
+        let db = get_db()?;
         let rows = sqlx::query!("SELECT node_id FROM peers")
             .fetch_all(db)
             .await?;
@@ -327,7 +327,7 @@ impl Peer {
     }
 
     pub async fn find_by_node_id(node_id: &str) -> anyhow::Result<Option<Self>> {
-        let db = get_db();
+        let db = get_db()?;
         let peer = sqlx::query_as!(
             Peer,
             "SELECT node_id, last_seen, hostname, age_public_key FROM peers WHERE node_id = ?",
@@ -355,7 +355,7 @@ pub struct Event {
 
 impl Event {
     pub async fn list() -> anyhow::Result<Vec<Self>> {
-        let db = get_db();
+        let db = get_db()?;
         let events = sqlx::query_as!(
             Event,
             "SELECT id, event_type, message, time, data FROM events ORDER BY time DESC LIMIT 100"
@@ -370,7 +370,7 @@ impl Event {
         message: String,
         data: Option<serde_json::Value>,
     ) -> anyhow::Result<()> {
-        let db = get_db();
+        let db = get_db()?;
         let event_id = Uuid::new_v4().to_string();
         let event_type_json = serde_json::to_string(&event_type)?;
         let data_json = serde_json::to_string(&data.unwrap_or(serde_json::Value::Null))?;
@@ -540,7 +540,7 @@ impl Secret {
         let target_node_id_str = node_id_to_string(&target_node_id);
         let now = Utc::now().naive_utc();
 
-        let db = get_db();
+        let db = get_db()?;
         sqlx::query!(
             "INSERT INTO secrets (name, encrypted_data, hash, target_node_id, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)",
@@ -582,7 +582,7 @@ impl Secret {
         if let Ok(identity) = Identity::get_or_create().await {
             if target_node_id == identity.id() {
                 tracing::debug!("Secret '{}' is for current node, syncing to systemd", name);
-                let config = crate::get_systemd_secrets_config();
+                let config = crate::get_systemd_secrets_config()?;
                 let cred_path = format!("{}/{}.cred", config.path, name);
                 tracing::debug!(
                     "Writing secret '{}' to systemd at path: {}",
@@ -624,7 +624,7 @@ impl Secret {
         let target_node_id_str = node_id_to_string(&target_node_id);
         let now = Utc::now().naive_utc();
 
-        let db = get_db();
+        let db = get_db()?;
 
         // Check if we already have this secret with the same hash
         let existing = sqlx::query!(
@@ -710,7 +710,7 @@ impl Secret {
                                 decrypted_content.len()
                             );
 
-                            let config = crate::get_systemd_secrets_config();
+                            let config = crate::get_systemd_secrets_config()?;
                             let cred_path = format!("{}/{}.cred", config.path, name);
 
                             info!(
@@ -769,7 +769,7 @@ impl Secret {
     }
 
     pub async fn list_all() -> Result<Vec<Self>> {
-        let db = get_db();
+        let db = get_db()?;
 
         let secrets = sqlx::query_as!(
             Secret,
@@ -783,7 +783,7 @@ impl Secret {
     }
 
     pub async fn list_all_grouped() -> Result<Vec<GroupedSecret>> {
-        let db = get_db();
+        let db = get_db()?;
 
         let rows = sqlx::query!(
             "SELECT
@@ -816,7 +816,7 @@ impl Secret {
     }
 
     pub async fn find_by_name_and_hash(name: &str, hash: &str) -> Result<Vec<Self>> {
-        let db = get_db();
+        let db = get_db()?;
 
         let secrets = sqlx::query_as!(
             Secret,
@@ -846,7 +846,7 @@ impl Secret {
     }
 
     pub async fn delete(name: &str, hash: &str, target_node_id: NodeId) -> Result<bool> {
-        let db = get_db();
+        let db = get_db()?;
         let target_node_id_str = node_id_to_string(&target_node_id);
 
         let rows_affected = sqlx::query!(
@@ -865,7 +865,7 @@ impl Secret {
         if was_deleted {
             if let Ok(identity) = Identity::get_or_create().await {
                 if target_node_id == identity.id() {
-                    let config = crate::get_systemd_secrets_config();
+                    let config = crate::get_systemd_secrets_config()?;
                     let cred_path = format!("{}/{}.cred", config.path, name);
                     if let Err(e) =
                         crate::systemd_secrets::delete_secret(name, &cred_path, config.user_scope)
@@ -909,7 +909,7 @@ pub async fn init_test_db() -> Result<()> {
     // For tests, just use the regular DATABASE but allow reinitialization
     if DATABASE.get().is_some() {
         // Database already exists, clear all data for test isolation
-        let db = get_db();
+        let db = get_db()?;
         sqlx::query!("DELETE FROM events").execute(db).await?;
         sqlx::query!("DELETE FROM peers").execute(db).await?;
         sqlx::query!("DELETE FROM identities").execute(db).await?;
@@ -928,10 +928,10 @@ pub async fn init_test_db() -> Result<()> {
     Ok(())
 }
 
-pub fn get_db() -> &'static SqlitePool {
+pub fn get_db() -> anyhow::Result<&'static SqlitePool> {
     DATABASE
         .get()
-        .expect("Database not initialized. Call init_db() first.")
+        .ok_or_else(|| anyhow::anyhow!("Database not initialized. Call init_db() first."))
 }
 
 pub async fn close_db() -> Result<()> {

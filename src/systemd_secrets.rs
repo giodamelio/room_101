@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::process::Command;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SystemdSecretsError {
@@ -120,8 +120,7 @@ pub async fn write_secret(name: &str, content: &[u8], path: &str, user_scope: bo
         }
         if stderr.contains("Permission denied") || stderr.contains("Operation not permitted") {
             return Err(SystemdSecretsError::PermissionDenied(format!(
-                "Permission denied writing to {}: {}",
-                path, stderr
+                "Permission denied writing to {path}: {stderr}"
             )));
         }
         return Err(SystemdSecretsError::CommandFailed(stderr.to_string()));

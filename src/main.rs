@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use iroh::NodeId;
+use ractor::Actor;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -8,8 +9,8 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use network::network_manager_task;
-use webserver::webserver_task;
 
+mod actors;
 mod db;
 mod error;
 mod middleware;
@@ -17,7 +18,6 @@ mod network;
 mod systemd_secrets;
 mod utils;
 mod web_components;
-mod webserver;
 
 #[derive(Debug, Clone)]
 pub struct SystemdSecretsConfig {
@@ -27,10 +27,10 @@ pub struct SystemdSecretsConfig {
 
 static SYSTEMD_SECRETS_CONFIG: OnceLock<SystemdSecretsConfig> = OnceLock::new();
 
-pub fn get_systemd_secrets_config() -> &'static SystemdSecretsConfig {
+pub fn get_systemd_secrets_config() -> anyhow::Result<&'static SystemdSecretsConfig> {
     SYSTEMD_SECRETS_CONFIG
         .get()
-        .expect("SystemdSecretsConfig not initialized")
+        .ok_or_else(|| anyhow::anyhow!("SystemdSecretsConfig not initialized"))
 }
 
 #[derive(Parser, Debug)]
@@ -146,16 +146,12 @@ async fn main() -> Result<()> {
         debug!("Creating shared peer message channel for webserver integration");
         let (tx, rx) = tokio::sync::mpsc::channel::<network::PeerMessage>(100);
 
-        debug!("Starting webserver task on port {}", args.port);
-        let shutdown_rx = shutdown_tx.subscribe();
-        let webserver_tx = tx.clone();
-        let webserver_port = args.port;
-        tasks.push(tokio::spawn(async move {
-            if let Err(e) = webserver_task(shutdown_rx, webserver_tx, webserver_port).await {
-                error!("Webserver task error: {}", e);
-            }
-            debug!("Webserver task completed");
-        }));
+        Actor::spawn(
+            Some(actors::webserver::NAME.into()),
+            actors::webserver::WebServerActor,
+            (args.port, 10),
+        )
+        .await?;
 
         (Some(tx), Some(rx))
     } else {

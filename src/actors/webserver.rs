@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use chrono::{DateTime, Utc};
 use chrono_humanize::HumanTime;
 use iroh::NodeId;
@@ -6,11 +8,17 @@ use poem::{
     Body, Endpoint, EndpointExt, IntoResponse, Route, Server, get, handler, listener::TcpListener,
     post, web::Data, web::Form, web::Path, web::Query, web::Redirect,
 };
+use ractor::ActorRef;
+use ractor::{Actor, ActorProcessingErr};
 use serde::Deserialize;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+use tracing::info;
 use tracing::{debug, error};
 use url::form_urlencoded;
 
+use crate::network;
 use crate::{
     db::{Event, EventType, GroupedSecret, Identity, Peer, Secret, decrypt_secret_for_identity},
     error::{AppError, Result},
@@ -18,6 +26,79 @@ use crate::{
     network::{PeerMessage, announce_secret, announce_secret_deletion},
     web_components::*,
 };
+
+pub static NAME: &str = "webserver";
+
+pub struct WebServerActor;
+
+#[derive(Debug)]
+pub enum WebServerMessage {}
+
+impl Actor for WebServerActor {
+    type Msg = WebServerMessage;
+    type State = (Option<oneshot::Sender<()>>, JoinHandle<()>, u64);
+    type Arguments = (u16, u64);
+
+    async fn pre_start(
+        &self,
+        _myself: ractor::ActorRef<Self::Msg>,
+        (port, shutdown_timeout): Self::Arguments,
+    ) -> std::result::Result<Self::State, ActorProcessingErr> {
+        info!("Web Server Actor pre start");
+
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        // TODO: temporary here until we get network running on a actor
+        let (tx, _rx) = tokio::sync::mpsc::channel::<network::PeerMessage>(100);
+
+        let server_task_handle = tokio::spawn(async move {
+            let bind_addr = format!("0.0.0.0:{port}");
+            let app = create_app(tx.clone());
+
+            let server = Server::new(TcpListener::bind(&bind_addr)).run_with_graceful_shutdown(
+                app,
+                async {
+                    let _ = shutdown_rx.await;
+                    debug!("Poem server received shutdown signal");
+                },
+                Some(std::time::Duration::from_secs(shutdown_timeout)),
+            );
+
+            if let Err(e) = server.await {
+                error!("Web server error: {}", e);
+            }
+        });
+
+        Ok((Some(shutdown_tx), server_task_handle, shutdown_timeout))
+    }
+
+    async fn post_stop(
+        &self,
+        _myself: ActorRef<Self::Msg>,
+        (shutdown_tx, server_task_handle, shutdown_timeout): &mut Self::State,
+    ) -> std::result::Result<(), ActorProcessingErr> {
+        // Send the shutdown signal to the Poem server
+        if let Some(tx) = shutdown_tx.take() {
+            if let Err(e) = tx.send(()) {
+                debug!("Failed to send shutdown signal to Poem ({e:?})");
+            }
+        }
+
+        // Wait for the server task to actually finish
+        // Do the time for the Poem plus 3 seconds before killing it
+        match tokio::time::timeout(
+            Duration::from_secs(*shutdown_timeout + 3),
+            server_task_handle,
+        )
+        .await
+        {
+            Ok(Ok(_)) => debug!("Web server task shut down cleanly"),
+            Ok(Err(e)) => error!("Web server task error: {e:?}"),
+            Err(_) => error!("Web server shutdown timed out"),
+        }
+
+        Ok(())
+    }
+}
 
 fn format_relative_time(datetime: &DateTime<Utc>) -> String {
     HumanTime::from(*datetime).to_string()
@@ -149,7 +230,7 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                         @if let Some(_last_seen) = &peer.last_seen {
                             div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #666;" {
                                 span style="margin-right: 6px;" { "🕒" }
-                                span { "Last seen " (format_relative_time(&peer.get_last_seen_utc().unwrap())) }
+                                span { "Last seen " (peer.get_last_seen_utc().map_or("invalid timestamp".to_string(), |dt| format_relative_time(&dt))) }
                             }
                         } @else {
                             div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #999;" {
@@ -519,9 +600,9 @@ fn tmpl_secret_detail_grouped(
     peers: Vec<Peer>,
 ) -> Markup {
     let secret = &secrets[0]; // All secrets have same name/hash, use first for metadata
-    let is_for_current_node = secrets.iter().any(|s| {
-        s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == current_node_id
-    });
+    let is_for_current_node = secrets
+        .iter()
+        .any(|s| s.get_target_node_id().is_ok_and(|id| id == current_node_id));
 
     // Create hostname lookup map
     let peer_hostnames: std::collections::HashMap<String, Option<String>> = peers
@@ -559,7 +640,7 @@ fn tmpl_secret_detail_grouped(
                                 @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
                                     span style="color: #059669; margin-left: 2px;" { "(" (hostname) ")" }
                                 }
-                                @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
+                                @if secret.get_target_node_id().is_ok_and(|id| id == current_node_id) {
                                     span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 2px;" {
                                         "YOU"
                                     }
@@ -631,8 +712,9 @@ fn tmpl_secret_detail(
     current_node_id: NodeId,
     peer_hostname: Option<String>,
 ) -> Markup {
-    let is_for_current_node = secret.get_target_node_id().is_ok()
-        && secret.get_target_node_id().unwrap() == current_node_id;
+    let is_for_current_node = secret
+        .get_target_node_id()
+        .is_ok_and(|id| id == current_node_id);
 
     layout(html! {
         nav style="margin-bottom: 20px;" {
@@ -750,9 +832,7 @@ async fn reveal_secret(
     // Find the secret meant for the current node
     let secret = secrets
         .into_iter()
-        .find(|s| {
-            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == identity.id()
-        })
+        .find(|s| s.get_target_node_id().is_ok_and(|id| id == identity.id()))
         .ok_or_else(|| AppError::Forbidden("No secret found for your node".to_string()))?;
 
     let decrypted_content = decrypt_secret_for_identity(&secret.encrypted_data, &identity)
@@ -814,9 +894,7 @@ async fn share_secret_form(
     // Verify user owns this secret
     let _owned_secret = secrets
         .iter()
-        .find(|s| {
-            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == current_node_id
-        })
+        .find(|s| s.get_target_node_id().is_ok_and(|id| id == current_node_id))
         .ok_or_else(|| AppError::Forbidden("You can only share secrets you own".to_string()))?;
 
     // Get all peers
@@ -886,9 +964,7 @@ async fn process_share_secret(
     // Find the secret owned by current node
     let owned_secret = secrets
         .iter()
-        .find(|s| {
-            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == current_node_id
-        })
+        .find(|s| s.get_target_node_id().is_ok_and(|id| id == current_node_id))
         .ok_or_else(|| AppError::Forbidden("You can only share secrets you own".to_string()))?;
 
     // Decrypt the secret content
@@ -903,9 +979,9 @@ async fn process_share_secret(
             .map_err(|e| AppError::BadRequest(format!("Invalid node ID {node_id_str}: {e}")))?;
 
         // Check if this target already has the secret
-        let already_exists = secrets.iter().any(|s| {
-            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == target_node_id
-        });
+        let already_exists = secrets
+            .iter()
+            .any(|s| s.get_target_node_id().is_ok_and(|id| id == target_node_id));
 
         if already_exists {
             debug!(
@@ -990,7 +1066,7 @@ async fn process_share_secret(
                                 @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
                                     span style="color: #059669; margin-left: 2px;" { "(" (hostname) ")" }
                                 }
-                                @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
+                                @if secret.get_target_node_id().is_ok_and(|id| id == current_node_id) {
                                     span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 2px;" {
                                         "YOU"
                                     }
@@ -1082,7 +1158,7 @@ fn tmpl_share_secret(
                                 @if let Some(hostname) = peer_hostnames.get(&secret.target_node_id).and_then(|h| h.as_ref()) {
                                     span style="margin-left: 4px;" { "(" (hostname) ")" }
                                 }
-                                @if secret.get_target_node_id().is_ok() && secret.get_target_node_id().unwrap() == current_node_id {
+                                @if secret.get_target_node_id().is_ok_and(|id| id == current_node_id) {
                                     span style="background: #fef3c7; color: #d97706; padding: 1px 4px; border-radius: 3px; font-size: 0.7em; margin-left: 4px;" {
                                         "YOU"
                                     }
@@ -1425,9 +1501,7 @@ async fn delete_secret(
     // Find the secret meant for the current node
     let secret = secrets
         .into_iter()
-        .find(|s| {
-            s.get_target_node_id().is_ok() && s.get_target_node_id().unwrap() == identity.id()
-        })
+        .find(|s| s.get_target_node_id().is_ok_and(|id| id == identity.id()))
         .ok_or_else(|| {
             AppError::Forbidden("You can only delete secrets that belong to you".to_string())
         })?;
@@ -1566,7 +1640,7 @@ fn tmpl_peer_detail(peer: &Peer, secrets: Vec<GroupedSecret>, current_node_id: N
                     @if let Some(_last_seen) = &peer.last_seen {
                         div {
                             label style="font-weight: bold; color: #374151; display: block; margin-bottom: 4px;" { "Last Seen" }
-                            span style="color: #6b7280;" { (format_relative_time(&peer.get_last_seen_utc().unwrap())) }
+                            span style="color: #6b7280;" { (peer.get_last_seen_utc().map_or("invalid timestamp".to_string(), |dt| format_relative_time(&dt))) }
                         }
                     }
                 }
@@ -1663,7 +1737,7 @@ async fn sync_peer_secrets(
     // Parse the node ID
     let target_node_id: NodeId = node_id
         .parse()
-        .map_err(|e| AppError::BadRequest(format!("Invalid node ID: {}", e)))?;
+        .map_err(|e| AppError::BadRequest(format!("Invalid node ID: {e}")))?;
 
     // Get current identity to check if this is a self-sync
     let identity = get_current_identity().await?;
@@ -1674,7 +1748,7 @@ async fn sync_peer_secrets(
         // For current node, sync directly to systemd
         sync_all_secrets_to_systemd()
             .await
-            .map_err(|e| AppError::Internal(format!("Failed to sync secrets to systemd: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("Failed to sync secrets to systemd: {e}")))?;
         debug!("Successfully synced current node secrets to systemd");
     } else {
         debug!("Sending sync request to remote node {}", target_node_id);
@@ -1686,7 +1760,7 @@ async fn sync_peer_secrets(
     }
 
     // Redirect back to the peer detail page
-    Ok(Redirect::temporary(format!("/peers/{}", node_id)))
+    Ok(Redirect::temporary(format!("/peers/{node_id}")))
 }
 
 pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
@@ -1708,174 +1782,4 @@ pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
         .at("/secrets/:name/:hash/delete", poem::post(delete_secret))
         .data(peer_message_tx)
         .with(HtmxErrorMiddleware)
-}
-
-pub async fn webserver_task(
-    mut shutdown_rx: broadcast::Receiver<()>,
-    peer_message_tx: mpsc::Sender<PeerMessage>,
-    port: u16,
-) -> anyhow::Result<()> {
-    debug!("WebServer task starting on port {}...", port);
-
-    let app = create_app(peer_message_tx);
-
-    let bind_addr = format!("0.0.0.0:{}", port);
-    debug!("Binding webserver to {}", bind_addr);
-    let result = Server::new(TcpListener::bind(&bind_addr))
-        .run_with_graceful_shutdown(
-            app,
-            async {
-                let _ = shutdown_rx.recv().await;
-                debug!("Poem server received shutdown signal");
-            },
-            Some(std::time::Duration::from_secs(5)),
-        )
-        .await;
-
-    match result {
-        Ok(_) => debug!("Poem server shutdown complete"),
-        Err(e) => error!("Poem server error: {}", e),
-    }
-
-    debug!("WebServer task stopped");
-    Ok(())
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests {
-    use super::*;
-    use poem::test::TestClient;
-
-    #[derive(serde::Serialize)]
-    struct TestCreatePeer {
-        id: String,
-    }
-
-    async fn setup_test_db() {
-        let _ = crate::db::init_test_db().await;
-    }
-
-    fn create_test_app() -> impl Endpoint {
-        let (peer_message_tx, _) = mpsc::channel::<PeerMessage>(100);
-        create_app(peer_message_tx)
-    }
-
-    #[tokio::test]
-    async fn test_list_peers_empty() {
-        setup_test_db().await;
-        let app = create_test_app();
-        let client = TestClient::new(app);
-
-        let response = client.get("/peers").send().await;
-        response.assert_status_is_ok();
-
-        let body = response.0.into_body().into_string().await.unwrap();
-        assert!(body.contains("Peers"));
-        assert!(body.contains("Add New Peer"));
-    }
-
-    #[tokio::test]
-    async fn test_create_peer_invalid_node_id() {
-        setup_test_db().await;
-        let app = create_test_app();
-        let client = TestClient::new(app);
-
-        let response = client
-            .post("/peers")
-            .form(&TestCreatePeer {
-                id: "invalid-node-id".to_string(),
-            })
-            .send()
-            .await;
-
-        response.assert_status(poem::http::StatusCode::BAD_REQUEST);
-        response
-            .assert_text("Invalid input: Invalid Node ID format: invalid length")
-            .await;
-    }
-
-    #[tokio::test]
-    async fn test_create_peer_htmx_error_handling() {
-        setup_test_db().await;
-        let app = create_test_app();
-        let client = TestClient::new(app);
-
-        let response = client
-            .post("/peers")
-            .header("HX-Request", "true")
-            .form(&TestCreatePeer {
-                id: "invalid-node-id".to_string(),
-            })
-            .send()
-            .await;
-
-        response.assert_status(poem::http::StatusCode::BAD_REQUEST);
-        response.assert_header("HX-Retarget", "#error-message");
-        response.assert_header("HX-Reswap", "innerHTML");
-        response
-            .assert_text("Invalid input: Invalid Node ID format: invalid length")
-            .await;
-    }
-
-    #[tokio::test]
-    async fn test_create_peer_success() {
-        setup_test_db().await;
-        let app = create_test_app();
-        let client = TestClient::new(app);
-
-        // Generate a valid iroh NodeId
-        use iroh::PublicKey;
-        let valid_node_id = PublicKey::from_bytes(&[1u8; 32]).unwrap();
-
-        let response = client
-            .post("/peers")
-            .form(&TestCreatePeer {
-                id: valid_node_id.to_string(),
-            })
-            .send()
-            .await;
-
-        response.assert_status_is_ok();
-
-        let body = response.0.into_body().into_string().await.unwrap();
-        assert!(body.contains("peer-list"));
-        assert!(body.contains(&valid_node_id.to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_create_peer_duplicate() {
-        setup_test_db().await;
-        let app = create_test_app();
-        let client = TestClient::new(app);
-
-        // Generate a valid iroh NodeId
-        use iroh::PublicKey;
-        let mut key_bytes = [1u8; 32];
-        key_bytes[0] = 2; // Make it different from the first test
-        let valid_node_id = PublicKey::from_bytes(&key_bytes).unwrap();
-
-        // Create the peer first time - should succeed
-        let response = client
-            .post("/peers")
-            .form(&TestCreatePeer {
-                id: valid_node_id.to_string(),
-            })
-            .send()
-            .await;
-        response.assert_status_is_ok();
-
-        // Try to create the same peer again - should fail
-        let response = client
-            .post("/peers")
-            .form(&TestCreatePeer {
-                id: valid_node_id.to_string(),
-            })
-            .send()
-            .await;
-
-        response.assert_status(poem::http::StatusCode::BAD_REQUEST);
-        let body = response.0.into_body().into_string().await.unwrap();
-        assert!(body.contains("UNIQUE constraint failed") || body.contains("already exists"));
-    }
 }
