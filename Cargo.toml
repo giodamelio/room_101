@@ -12,7 +12,7 @@ print_stderr = "deny"
 
 
 [dependencies]
-iroh = "0.91.1"
+iroh = { version = "0.91.1", features = ["discovery-local-network"] }
 iroh-gossip = "0.91.0"
 anyhow = "1.0"
 thiserror = "2.0.12"

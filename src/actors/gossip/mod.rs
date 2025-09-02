@@ -155,7 +155,8 @@ async fn run_gossip_networking(
     debug!("Creating iroh endpoint with identity");
     let endpoint = Endpoint::builder()
         .secret_key(identity.secret_key.clone())
-        .discovery_n0()
+        .discovery_n0() // Enable N0 discovery for internet connectivity
+        .discovery_local_network() // Enable mDNS discovery for LAN connectivity
         .bind()
         .await
         .context("Failed to create iroh endpoint")?;
