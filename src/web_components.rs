@@ -121,7 +121,7 @@ pub fn status_bar(
                     @if let Some(host) = hostname {
                         (host)
                     } @else {
-                        "localhost"
+                        "unknown"
                     }
                     span style="color: #9ca3af; font-family: monospace; margin-left: 4px;" {
                         "(" (short_node_id) "...)"

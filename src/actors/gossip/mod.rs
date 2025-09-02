@@ -354,7 +354,7 @@ async fn setup_gossip_subscription(
     Ok((peer_sender, peer_receiver))
 }
 
-fn get_hostname() -> Option<String> {
+pub fn get_hostname() -> Option<String> {
     hostname::get()
         .map(|h| h.to_string_lossy().to_string())
         .ok()

@@ -266,7 +266,7 @@ async fn get_status_counts() -> Result<(usize, usize, String, Option<String>)> {
         .len();
     let identity = get_current_identity().await?;
     let node_id = identity.id().to_string();
-    let hostname = std::env::var("HOSTNAME").ok();
+    let hostname = crate::actors::gossip::get_hostname();
 
     Ok((peer_count, secret_count, node_id, hostname))
 }
@@ -1844,7 +1844,7 @@ async fn get_peer_detail(poem::web::Path(node_id): poem::web::Path<String>) -> R
         Peer {
             node_id: node_id.clone(),
             last_seen: Some(chrono::Utc::now().naive_utc()), // Always "connected"
-            hostname: Some("localhost".to_string()),
+            hostname: crate::actors::gossip::get_hostname(),
             age_public_key: Some(crate::db::age_public_key_to_string(&identity.age_key)),
         }
     } else {
