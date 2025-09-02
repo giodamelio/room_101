@@ -258,6 +258,32 @@ async fn sync_all_secrets_to_systemd_via_actor() -> Result<()> {
     Ok(())
 }
 
+async fn get_status_counts() -> Result<(usize, usize, String, Option<String>)> {
+    let peer_count = Peer::list().await?.len();
+    let secret_count = Secret::list_all_grouped()
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .len();
+    let identity = get_current_identity().await?;
+    let node_id = identity.id().to_string();
+    let hostname = std::env::var("HOSTNAME").ok();
+
+    Ok((peer_count, secret_count, node_id, hostname))
+}
+
+async fn layout_with_default_navbar(content: Markup) -> Result<Markup> {
+    let (peer_count, secret_count, node_id, hostname) = get_status_counts().await?;
+
+    Ok(layout_with_navbar(
+        content,
+        "none", // Default page type for pages that don't specify
+        Some(peer_count),
+        Some(secret_count),
+        Some(&node_id),
+        hostname.as_deref(),
+    ))
+}
+
 fn layout(content: Markup) -> Markup {
     html! {
         (DOCTYPE)
@@ -330,70 +356,111 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
     }
 }
 
-fn tmpl_index() -> Markup {
-    layout(html! {
-        h1 { "Room 101" }
-        p { "A peer-to-peer networking application" }
+async fn tmpl_index() -> Result<Markup> {
+    let (peer_count, secret_count, node_id, hostname) = get_status_counts().await?;
 
-        nav {
-            ul style="list-style: none; padding: 0;" {
-                li style="margin: 10px 0;" {
-                    a href="/peers" style="display: block; padding: 10px; background: #f0f0f0; text-decoration: none; border-radius: 5px;" {
-                        "📡 Peers"
-                    }
+    Ok(layout_with_navbar(
+        html! {
+            div style="text-align: center; padding: 60px 20px;" {
+                h1 style="font-size: 3em; color: #1f2937; margin: 0 0 16px 0;" { "Room 101" }
+                p style="font-size: 1.2em; color: #6b7280; margin: 0 0 40px 0;" {
+                    "A peer-to-peer networking application for secure secret sharing"
                 }
-                li style="margin: 10px 0;" {
-                    a href="/events" style="display: block; padding: 10px; background: #f0f0f0; text-decoration: none; border-radius: 5px;" {
-                        "📋 Events"
+
+                div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; max-width: 900px; margin: 0 auto;" {
+                    // Peers card
+                    a href="/peers" style="text-decoration: none;" {
+                        div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; transition: box-shadow 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.1);" {
+                            div style="font-size: 3em; margin-bottom: 12px;" { "📡" }
+                            h2 style="color: #1f2937; margin: 0 0 8px 0;" { "Peers" }
+                            p style="color: #6b7280; margin: 0 0 12px 0; font-size: 0.9em;" {
+                                "Manage network connections and view peer status"
+                            }
+                            div style="background: #dbeafe; color: #1d4ed8; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; display: inline-block;" {
+                                (peer_count) " connected"
+                            }
+                        }
                     }
-                }
-                li style="margin: 10px 0;" {
-                    a href="/secrets" style="display: block; padding: 10px; background: #f0f0f0; text-decoration: none; border-radius: 5px;" {
-                        "🔐 Secrets"
+
+                    // Secrets card
+                    a href="/secrets" style="text-decoration: none;" {
+                        div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; transition: box-shadow 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.1);" {
+                            div style="font-size: 3em; margin-bottom: 12px;" { "🔐" }
+                            h2 style="color: #1f2937; margin: 0 0 8px 0;" { "Secrets" }
+                            p style="color: #6b7280; margin: 0 0 12px 0; font-size: 0.9em;" {
+                                "Create, share, and manage encrypted secrets"
+                            }
+                            div style="background: #dcfce7; color: #166534; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; display: inline-block;" {
+                                (secret_count) " secrets"
+                            }
+                        }
+                    }
+
+                    // Events card
+                    a href="/events" style="text-decoration: none;" {
+                        div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; transition: box-shadow 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.1);" {
+                            div style="font-size: 3em; margin-bottom: 12px;" { "📋" }
+                            h2 style="color: #1f2937; margin: 0 0 8px 0;" { "Events" }
+                            p style="color: #6b7280; margin: 0; font-size: 0.9em;" {
+                                "View application logs and network activity"
+                            }
+                        }
                     }
                 }
             }
-        }
-    })
+        },
+        "home",
+        Some(peer_count),
+        Some(secret_count),
+        Some(&node_id),
+        hostname.as_deref(),
+    ))
 }
 
-fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Markup {
-    layout(html! {
-        (nav_breadcrumb("/", "Home"))
+async fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Result<Markup> {
+    let (peer_count, secret_count, node_id, hostname) = get_status_counts().await?;
 
-        h1 { "Peers" }
+    Ok(layout_with_navbar(
+        html! {
+            h1 { "Peers" }
 
-        h2 style="margin-bottom: 12px;" { "This Node" }
-        div style="background: #f0f9ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 16px; margin-bottom: 24px;" {
-            div style="display: flex; align-items: center; margin-bottom: 12px;" {
-                span style="font-size: 1.5em; margin-right: 8px;" { "🏠" }
-                div style="flex: 1;" {
-                    a href=(format!("/peers/{}", current_node_id.to_string()))
-                      style="text-decoration: none; color: inherit;"
-                    {
-                        (node_id_with_copy(&current_node_id.to_string(), "font-weight: bold; font-size: 0.9em; color: #2563eb; font-family: monospace;"))
+            h2 style="margin-bottom: 12px;" { "This Node" }
+            div style="background: #f0f9ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 16px; margin-bottom: 24px;" {
+                div style="display: flex; align-items: center; margin-bottom: 12px;" {
+                    span style="font-size: 1.5em; margin-right: 8px;" { "🏠" }
+                    div style="flex: 1;" {
+                        a href=(format!("/peers/{}", current_node_id.to_string()))
+                          style="text-decoration: none; color: inherit;"
+                        {
+                            (node_id_with_copy(&current_node_id.to_string(), "font-weight: bold; font-size: 0.9em; color: #2563eb; font-family: monospace;"))
+                        }
+                    }
+                    span style="background: #3b82f6; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.8em;" {
+                        "YOU"
                     }
                 }
-                span style="background: #3b82f6; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.8em;" {
-                    "YOU"
+                div style="display: flex; align-items: center; font-size: 0.85em; color: #666;" {
+                    span style="margin-right: 6px;" { "🔗" }
+                    span { "Your local node - always connected" }
                 }
             }
-            div style="display: flex; align-items: center; font-size: 0.85em; color: #666;" {
-                span style="margin-right: 6px;" { "🔗" }
-                span { "Your local node - always connected" }
+
+            h2 { "Add New Peer" }
+            div id="error-message" style="color: red; margin-bottom: 10px;" {}
+            form method="POST" action="/peers" hx-post="/peers" hx-target="#peer-list" hx-swap="outerHTML" style="margin-bottom: 20px;" {
+                input type="text" name="id" placeholder="Node ID" required;
+                input type="submit" value="Add Peer";
             }
-        }
 
-        h2 { "Add New Peer" }
-        div id="error-message" style="color: red; margin-bottom: 10px;" {}
-        form method="POST" action="/peers" hx-post="/peers" hx-target="#peer-list" hx-swap="outerHTML" style="margin-bottom: 20px;" {
-            input type="text" name="id" placeholder="Node ID" required;
-            input type="submit" value="Add Peer";
-        }
-
-        h2 { "Network Peers" }
-        (tmpl_peer_list(&peers))
-    })
+            h2 { "Network Peers" }
+            (tmpl_peer_list(&peers))
+        },
+        "peers",
+        Some(peer_count),
+        Some(secret_count),
+        Some(&node_id),
+        hostname.as_deref(),
+    ))
 }
 
 fn tmpl_event_list(events: &Vec<Event>) -> Markup {
@@ -455,19 +522,26 @@ fn tmpl_event_list(events: &Vec<Event>) -> Markup {
     }
 }
 
-fn tmpl_list_events(events: Vec<Event>) -> Markup {
-    layout(html! {
-        (nav_breadcrumb("/", "Home"))
+async fn tmpl_list_events(events: Vec<Event>) -> Result<Markup> {
+    let (peer_count, secret_count, node_id, hostname) = get_status_counts().await?;
 
-        h1 { "Events" }
-        p { "Last 100 events" }
+    Ok(layout_with_navbar(
+        html! {
+            h1 { "Events" }
+            p { "Last 100 events" }
 
-        @if events.is_empty() {
-            p style="color: #666;" { "No events yet" }
-        } @else {
-            (tmpl_event_list(&events))
-        }
-    })
+            @if events.is_empty() {
+                p style="color: #666;" { "No events yet" }
+            } @else {
+                (tmpl_event_list(&events))
+            }
+        },
+        "events",
+        Some(peer_count),
+        Some(secret_count),
+        Some(&node_id),
+        hostname.as_deref(),
+    ))
 }
 
 fn tmpl_grouped_secret_list(
@@ -507,8 +581,6 @@ fn tmpl_grouped_secret_list(
                                     }
                                     button
                                         hx-post=(format!("/secrets/{}/{}/delete", grouped_secret.name, grouped_secret.hash))
-                                        hx-target="body"
-                                        hx-swap="innerHTML"
                                         hx-confirm="Are you sure you want to delete this secret? This action cannot be undone."
                                         style="background: #dc2626; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em;"
                                         title="Delete this secret"
@@ -562,12 +634,14 @@ fn tmpl_grouped_secret_list(
     }
 }
 
-fn tmpl_list_grouped_secrets(
+async fn tmpl_list_grouped_secrets(
     grouped_secrets: Vec<GroupedSecret>,
     current_node_id: NodeId,
     peers: Vec<Peer>,
     peer_filter: Option<String>,
-) -> Markup {
+) -> Result<Markup> {
+    let (peer_count, secret_count, node_id, hostname) = get_status_counts().await?;
+
     // Find the peer hostname if filtering
     let filtered_peer_hostname = if let Some(ref filter_id) = peer_filter {
         peers
@@ -578,58 +652,63 @@ fn tmpl_list_grouped_secrets(
         None
     };
 
-    layout(html! {
-        (nav_breadcrumb("/", "Home"))
-
-        @if let Some(filter_id) = &peer_filter {
-            div style="background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px; padding: 12px; margin-bottom: 20px;" {
-                div style="display: flex; align-items: center; gap: 8px;" {
-                    span style="color: #0369a1; font-size: 1.2em;" { "🔍" }
-                    span style="font-weight: bold; color: #0369a1;" { "Filtered by Peer:" }
-                    code style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px;" { (filter_id) }
-                    @if let Some(hostname) = filtered_peer_hostname {
-                        span style="color: #059669;" { "(" (hostname) ")" }
-                    }
-                    a href="/secrets" style="background: #6b7280; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 0.8em; margin-left: 8px;" {
-                        "Clear Filter"
+    Ok(layout_with_navbar(
+        html! {
+            @if let Some(filter_id) = &peer_filter {
+                div style="background: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px; padding: 12px; margin-bottom: 20px;" {
+                    div style="display: flex; align-items: center; gap: 8px;" {
+                        span style="color: #0369a1; font-size: 1.2em;" { "🔍" }
+                        span style="font-weight: bold; color: #0369a1;" { "Filtered by Peer:" }
+                        code style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px;" { (filter_id) }
+                        @if let Some(hostname) = filtered_peer_hostname {
+                            span style="color: #059669;" { "(" (hostname) ")" }
+                        }
+                        a href="/secrets" style="background: #6b7280; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 0.8em; margin-left: 8px;" {
+                            "Clear Filter"
+                        }
                     }
                 }
             }
-        }
 
-        h1 {
-            "Secrets"
-            @if let Some(_) = &peer_filter {
-                span style="color: #6b7280; font-weight: normal; font-size: 0.8em;" { " (Filtered)" }
+            h1 {
+                "Secrets"
+                @if let Some(_) = &peer_filter {
+                    span style="color: #6b7280; font-weight: normal; font-size: 0.8em;" { " (Filtered)" }
+                }
             }
-        }
 
-        div style="margin-bottom: 20px;" {
-            a href="/secrets/new" style="display: inline-block; padding: 10px 20px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px;" {
-                "➕ Add Secret"
+            div style="margin-bottom: 20px;" {
+                a href="/secrets/new" style="display: inline-block; padding: 10px 20px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px;" {
+                    "➕ Add Secret"
+                }
             }
-        }
 
-        (tmpl_grouped_secret_list(&grouped_secrets, current_node_id, &peers))
-    })
+            (tmpl_grouped_secret_list(&grouped_secrets, current_node_id, &peers))
+        },
+        "secrets",
+        Some(peer_count),
+        Some(secret_count),
+        Some(&node_id),
+        hostname.as_deref(),
+    ))
 }
 
 #[handler]
 async fn index() -> Result<Markup> {
-    Ok(tmpl_index())
+    tmpl_index().await
 }
 
 #[handler]
 async fn list_peers() -> Result<Markup> {
     let peers = Peer::list().await?;
     let identity = get_current_identity().await?;
-    Ok(tmpl_list_peers(peers, identity.id()))
+    tmpl_list_peers(peers, identity.id()).await
 }
 
 #[handler]
 async fn list_events() -> Result<Markup> {
     let events = Event::list().await?;
-    Ok(tmpl_list_events(events))
+    tmpl_list_events(events).await
 }
 
 #[handler]
@@ -648,19 +727,14 @@ async fn list_secrets(query: Query<SecretsQuery>) -> Result<Markup> {
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let identity = get_current_identity().await?;
 
-    Ok(tmpl_list_grouped_secrets(
-        grouped_secrets,
-        identity.id(),
-        peers,
-        query.peer.clone(),
-    ))
+    tmpl_list_grouped_secrets(grouped_secrets, identity.id(), peers, query.peer.clone()).await
 }
 
-fn tmpl_secret_detail_grouped(
+async fn tmpl_secret_detail_grouped(
     secrets: &[Secret],
     current_node_id: NodeId,
     peers: Vec<Peer>,
-) -> Markup {
+) -> Result<Markup> {
     let secret = &secrets[0]; // All secrets have same name/hash, use first for metadata
     let is_for_current_node = secrets
         .iter()
@@ -672,7 +746,7 @@ fn tmpl_secret_detail_grouped(
         .map(|p| (p.node_id.clone(), p.hostname.clone()))
         .collect();
 
-    layout(html! {
+    layout_with_default_navbar(html! {
         (nav_breadcrumb("/secrets", "Back to Secrets"))
 
         h1 { "Secret: " (secret.name) }
@@ -747,8 +821,6 @@ fn tmpl_secret_detail_grouped(
                             }
                             button
                                 hx-post=(format!("/secrets/{}/{}/delete", secret.name, secret.hash))
-                                hx-target="body"
-                                hx-swap="innerHTML"
                                 hx-confirm="Are you sure you want to delete this secret? This action cannot be undone and will notify all peers."
                                 style="padding: 8px 16px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer;"
                             {
@@ -765,7 +837,7 @@ fn tmpl_secret_detail_grouped(
                 }
             }
         }, None))
-    })
+    }).await
 }
 
 #[allow(dead_code)] // Replaced by tmpl_grouped_secret_detail, kept for reference
@@ -878,7 +950,7 @@ async fn get_secret_detail(
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let identity = get_current_identity().await?;
 
-    Ok(tmpl_secret_detail_grouped(&secrets, identity.id(), peers))
+    tmpl_secret_detail_grouped(&secrets, identity.id(), peers).await
 }
 
 #[handler]
@@ -1086,7 +1158,7 @@ async fn process_share_secret(
 
     let secret = &updated_secrets[0];
 
-    Ok(layout(html! {
+    layout_with_default_navbar(html! {
         // Success notification
         div style="background: #dcfce7; border: 1px solid #22c55e; border-radius: 8px; padding: 16px; margin-bottom: 20px;" {
             div style="display: flex; align-items: center;" {
@@ -1171,8 +1243,6 @@ async fn process_share_secret(
                         }
                         button
                             hx-post=(format!("/secrets/{}/{}/delete", secret.name, secret.hash))
-                            hx-target="body"
-                            hx-swap="innerHTML"
                             hx-confirm="Are you sure you want to delete this secret? This action cannot be undone and will notify all peers."
                             style="padding: 8px 16px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer;"
                         {
@@ -1188,7 +1258,7 @@ async fn process_share_secret(
                 }
             }
         }, None))
-    }))
+    }).await
 }
 
 fn tmpl_share_secret(
@@ -1289,8 +1359,8 @@ fn tmpl_share_secret(
     }
 }
 
-fn tmpl_add_secret(peers: Vec<Peer>, current_node_id: NodeId) -> Markup {
-    layout(html! {
+async fn tmpl_add_secret(peers: Vec<Peer>, current_node_id: NodeId) -> Result<Markup> {
+    layout_with_default_navbar(html! {
         (nav_breadcrumb("/secrets", "Back to Secrets"))
 
         h1 { "Add New Secret" }
@@ -1426,7 +1496,7 @@ fn tmpl_add_secret(peers: Vec<Peer>, current_node_id: NodeId) -> Markup {
                 }
             }
         }
-    })
+    }).await
 }
 
 #[handler]
@@ -1435,7 +1505,7 @@ async fn add_secret_form() -> Result<Markup> {
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let identity = get_current_identity().await?;
-    Ok(tmpl_add_secret(peers, identity.id()))
+    tmpl_add_secret(peers, identity.id()).await
 }
 
 #[handler]
@@ -1539,12 +1609,7 @@ async fn create_secret(body: Body) -> Result<Markup> {
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let identity = get_current_identity().await?;
 
-    Ok(tmpl_list_grouped_secrets(
-        grouped_secrets,
-        identity.id(),
-        peers,
-        None,
-    ))
+    tmpl_list_grouped_secrets(grouped_secrets, identity.id(), peers, None).await
 }
 
 #[derive(Deserialize, Debug)]
@@ -1577,7 +1642,7 @@ async fn create_peer(form: poem::Result<Form<CreatePeer>>) -> Result<Markup> {
 #[handler]
 async fn delete_secret(
     poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
-) -> Result<Markup> {
+) -> Result<impl IntoResponse> {
     let identity = get_current_identity().await?;
 
     // Parse the target node ID from the hash - we need to find the secret first
@@ -1617,25 +1682,17 @@ async fn delete_secret(
     }
 
     // Redirect back to secrets list
-    let grouped_secrets = Secret::list_all_grouped()
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let peers = Peer::list()
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    Ok(tmpl_list_grouped_secrets(
-        grouped_secrets,
-        identity.id(),
-        peers,
-        None,
-    ))
+    Ok(Redirect::temporary("/secrets"))
 }
 
-fn tmpl_peer_detail(peer: &Peer, secrets: Vec<GroupedSecret>, current_node_id: NodeId) -> Markup {
+async fn tmpl_peer_detail(
+    peer: &Peer,
+    secrets: Vec<GroupedSecret>,
+    current_node_id: NodeId,
+) -> Result<Markup> {
     let is_current_node = peer.node_id == current_node_id.to_string();
 
-    layout(html! {
+    layout_with_default_navbar(html! {
         (nav_breadcrumb("/peers", "Back to Peers"))
 
         h1 {
@@ -1769,7 +1826,7 @@ fn tmpl_peer_detail(peer: &Peer, secrets: Vec<GroupedSecret>, current_node_id: N
         } @else {
             (tmpl_grouped_secret_list(&secrets, current_node_id, &[peer.clone()]))
         }
-    })
+    }).await
 }
 
 #[handler]
@@ -1806,7 +1863,7 @@ async fn get_peer_detail(poem::web::Path(node_id): poem::web::Path<String>) -> R
     // Filter to only secrets for this peer
     grouped_secrets.retain(|secret| secret.has_target_node_str(&node_id));
 
-    Ok(tmpl_peer_detail(&peer, grouped_secrets, identity.id()))
+    tmpl_peer_detail(&peer, grouped_secrets, identity.id()).await
 }
 
 #[handler]
