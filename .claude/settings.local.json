@@ -22,7 +22,9 @@
       "mcp__language-server__diagnostics",
       "WebFetch(domain:htmx.org)",
       "Bash(treefmt:*)",
-      "WebFetch(domain:systemd.io)"
+      "WebFetch(domain:systemd.io)",
+      "Bash(rg:*)",
+      "Bash(ls:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

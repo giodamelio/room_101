@@ -6,28 +6,24 @@ use iroh::NodeId;
 use maud::{DOCTYPE, Markup, html};
 use poem::{
     Body, Endpoint, EndpointExt, IntoResponse, Route, Server, get, handler, listener::TcpListener,
-    post, web::Data, web::Form, web::Path, web::Query, web::Redirect,
+    post, web::Form, web::Path, web::Query, web::Redirect,
 };
 use ractor::ActorRef;
+use ractor::registry;
 use ractor::{Actor, ActorProcessingErr};
 use serde::Deserialize;
-use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::info;
 use tracing::{debug, error};
 use url::form_urlencoded;
 
-use crate::network;
 use crate::{
     db::{Event, EventType, GroupedSecret, Identity, Peer, Secret, decrypt_secret_for_identity},
     error::{AppError, Result},
     middleware::HtmxErrorMiddleware,
-    network::{PeerMessage, announce_secret, announce_secret_deletion},
     web_components::*,
 };
-
-pub static NAME: &str = "webserver";
 
 pub struct WebServerActor;
 
@@ -47,12 +43,10 @@ impl Actor for WebServerActor {
         info!("Web Server Actor pre start");
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        // TODO: temporary here until we get network running on a actor
-        let (tx, _rx) = tokio::sync::mpsc::channel::<network::PeerMessage>(100);
 
         let server_task_handle = tokio::spawn(async move {
             let bind_addr = format!("0.0.0.0:{port}");
-            let app = create_app(tx.clone());
+            let app = create_app();
 
             let server = Server::new(TcpListener::bind(&bind_addr)).run_with_graceful_shutdown(
                 app,
@@ -194,6 +188,74 @@ async fn get_current_identity() -> Result<Identity> {
     Identity::get_or_create()
         .await
         .map_err(|e| AppError::Internal(e.to_string()))
+}
+
+async fn announce_secret_via_gossip(secret: &Secret) -> Result<()> {
+    let gossip_actor = registry::where_is("gossip".to_string())
+        .ok_or_else(|| AppError::Internal("GossipActor not found in registry".to_string()))?;
+    let gossip_actor: ActorRef<crate::actors::gossip::GossipMessage> = gossip_actor.into();
+
+    gossip_actor
+        .cast(crate::actors::gossip::GossipMessage::AnnounceSecret(
+            secret.clone(),
+        ))
+        .map_err(|e| AppError::Internal(format!("Failed to send announce secret message: {e}")))?;
+
+    Ok(())
+}
+
+async fn announce_secret_deletion_via_gossip(
+    name: String,
+    hash: String,
+    target_node_id: iroh::NodeId,
+) -> Result<()> {
+    let gossip_actor = registry::where_is("gossip".to_string())
+        .ok_or_else(|| AppError::Internal("GossipActor not found in registry".to_string()))?;
+    let gossip_actor: ActorRef<crate::actors::gossip::GossipMessage> = gossip_actor.into();
+
+    gossip_actor
+        .cast(
+            crate::actors::gossip::GossipMessage::AnnounceSecretDeletion {
+                name,
+                hash,
+                target_node_id,
+            },
+        )
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "Failed to send announce secret deletion message: {e}"
+            ))
+        })?;
+
+    Ok(())
+}
+
+async fn send_secret_sync_request_via_gossip(target_node_id: iroh::NodeId) -> Result<()> {
+    let gossip_actor = registry::where_is("gossip".to_string())
+        .ok_or_else(|| AppError::Internal("GossipActor not found in registry".to_string()))?;
+    let gossip_actor: ActorRef<crate::actors::gossip::GossipMessage> = gossip_actor.into();
+
+    gossip_actor
+        .cast(crate::actors::gossip::GossipMessage::SendSecretSyncRequest(
+            target_node_id,
+        ))
+        .map_err(|e| {
+            AppError::Internal(format!("Failed to send secret sync request message: {e}"))
+        })?;
+
+    Ok(())
+}
+
+async fn sync_all_secrets_to_systemd_via_actor() -> Result<()> {
+    let systemd_actor = registry::where_is("systemd".to_string())
+        .ok_or_else(|| AppError::Internal("SystemdActor not found in registry".to_string()))?;
+    let systemd_actor: ActorRef<crate::actors::systemd::SystemdMessage> = systemd_actor.into();
+
+    systemd_actor
+        .cast(crate::actors::systemd::SystemdMessage::SyncAllSecrets)
+        .map_err(|e| AppError::Internal(format!("Failed to send sync all secrets message: {e}")))?;
+
+    Ok(())
 }
 
 fn layout(content: Markup) -> Markup {
@@ -932,7 +994,6 @@ async fn share_secret_form(
 async fn process_share_secret(
     poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
     body: Body,
-    Data(peer_message_tx): Data<&mpsc::Sender<PeerMessage>>,
 ) -> Result<Markup> {
     let identity = get_current_identity().await?;
     let current_node_id = identity.id();
@@ -996,7 +1057,7 @@ async fn process_share_secret(
             .map_err(|e| AppError::Internal(format!("Failed to create secret copy: {e}")))?;
 
         // Announce the secret to the network
-        if let Err(e) = announce_secret(&new_secret, peer_message_tx.clone()).await {
+        if let Err(e) = announce_secret_via_gossip(&new_secret).await {
             error!(
                 "Failed to announce shared secret '{}': {}",
                 new_secret.name, e
@@ -1378,10 +1439,7 @@ async fn add_secret_form() -> Result<Markup> {
 }
 
 #[handler]
-async fn create_secret(
-    body: Body,
-    Data(peer_message_tx): Data<&mpsc::Sender<PeerMessage>>,
-) -> Result<Markup> {
+async fn create_secret(body: Body) -> Result<Markup> {
     let body_bytes = body
         .into_bytes()
         .await
@@ -1422,18 +1480,43 @@ async fn create_secret(
     let content_bytes = trimmed_content.as_bytes();
 
     // Create secret for each target node
-    for node_id_str in target_nodes {
+    info!(
+        "🆕 Creating secret '{}' for {} target nodes",
+        name,
+        target_nodes.len()
+    );
+    for (i, node_id_str) in target_nodes.iter().enumerate() {
+        debug!(
+            "📝 Processing target {}/{}: {}",
+            i + 1,
+            target_nodes.len(),
+            node_id_str
+        );
         let target_node_id = node_id_str
             .parse::<NodeId>()
             .map_err(|e| AppError::BadRequest(format!("Invalid node ID {node_id_str}: {e}")))?;
 
+        info!("💾 Creating secret '{}' for node {}", name, target_node_id);
         let secret = Secret::create(name.clone(), content_bytes, target_node_id)
             .await
             .map_err(|e| AppError::Internal(format!("Failed to create secret: {e}")))?;
+        info!(
+            "✅ Secret '{}' created in database for node {}",
+            secret.name, secret.target_node_id
+        );
 
         // Announce the secret to the network
-        if let Err(e) = announce_secret(&secret, peer_message_tx.clone()).await {
-            error!("Failed to announce secret '{}': {}", secret.name, e);
+        info!(
+            "📡 Announcing secret '{}' to gossip network for node {}",
+            secret.name, target_node_id
+        );
+        if let Err(e) = announce_secret_via_gossip(&secret).await {
+            error!("❌ Failed to announce secret '{}': {}", secret.name, e);
+        } else {
+            info!(
+                "✅ Successfully announced secret '{}' for node {}",
+                secret.name, target_node_id
+            );
         }
 
         debug!(
@@ -1441,6 +1524,11 @@ async fn create_secret(
             secret.name, secret.target_node_id
         );
     }
+    info!(
+        "🎉 Completed creating secret '{}' for all {} targets",
+        name,
+        target_nodes.len()
+    );
 
     // Redirect to secrets list
     let grouped_secrets = Secret::list_all_grouped()
@@ -1489,7 +1577,6 @@ async fn create_peer(form: poem::Result<Form<CreatePeer>>) -> Result<Markup> {
 #[handler]
 async fn delete_secret(
     poem::web::Path((name, hash)): poem::web::Path<(String, String)>,
-    Data(peer_message_tx): Data<&mpsc::Sender<PeerMessage>>,
 ) -> Result<Markup> {
     let identity = get_current_identity().await?;
 
@@ -1517,13 +1604,8 @@ async fn delete_secret(
 
     if was_deleted {
         // Announce the deletion to the network
-        if let Err(e) = announce_secret_deletion(
-            name.clone(),
-            hash.clone(),
-            target_node_id,
-            peer_message_tx.clone(),
-        )
-        .await
+        if let Err(e) =
+            announce_secret_deletion_via_gossip(name.clone(), hash.clone(), target_node_id).await
         {
             error!("Failed to announce secret deletion '{}': {}", name, e);
         }
@@ -1728,12 +1810,7 @@ async fn get_peer_detail(poem::web::Path(node_id): poem::web::Path<String>) -> R
 }
 
 #[handler]
-async fn sync_peer_secrets(
-    Path(node_id): Path<String>,
-    Data(peer_message_tx): Data<&mpsc::Sender<PeerMessage>>,
-) -> Result<impl IntoResponse> {
-    use crate::network::{send_secret_sync_request, sync_all_secrets_to_systemd};
-
+async fn sync_peer_secrets(Path(node_id): Path<String>) -> Result<impl IntoResponse> {
     // Parse the node ID
     let target_node_id: NodeId = node_id
         .parse()
@@ -1746,14 +1823,14 @@ async fn sync_peer_secrets(
     if target_node_id == current_node_id {
         debug!("Syncing secrets to systemd for current node (direct call)");
         // For current node, sync directly to systemd
-        sync_all_secrets_to_systemd()
+        sync_all_secrets_to_systemd_via_actor()
             .await
             .map_err(|e| AppError::Internal(format!("Failed to sync secrets to systemd: {e}")))?;
         debug!("Successfully synced current node secrets to systemd");
     } else {
         debug!("Sending sync request to remote node {}", target_node_id);
         // For remote nodes, send sync request message
-        send_secret_sync_request(target_node_id, peer_message_tx.clone())
+        send_secret_sync_request_via_gossip(target_node_id)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
         debug!("Successfully sent sync request to remote node");
@@ -1763,7 +1840,7 @@ async fn sync_peer_secrets(
     Ok(Redirect::temporary(format!("/peers/{node_id}")))
 }
 
-pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
+pub fn create_app() -> impl Endpoint {
     Route::new()
         .at("/", get(index))
         .at("/peers", get(list_peers).post(create_peer))
@@ -1780,6 +1857,5 @@ pub fn create_app(peer_message_tx: mpsc::Sender<PeerMessage>) -> impl Endpoint {
             get(share_secret_form).post(process_share_secret),
         )
         .at("/secrets/:name/:hash/delete", poem::post(delete_secret))
-        .data(peer_message_tx)
         .with(HtmxErrorMiddleware)
 }

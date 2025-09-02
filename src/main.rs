@@ -1,14 +1,11 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use iroh::NodeId;
-use ractor::Actor;
+use ractor::{Actor, ActorProcessingErr, ActorRef};
 use std::sync::OnceLock;
 use std::time::Duration;
-use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
-
-use network::network_manager_task;
 
 mod actors;
 mod db;
@@ -23,6 +20,83 @@ mod web_components;
 pub struct SystemdSecretsConfig {
     pub path: String,
     pub user_scope: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    pub bootstrap_nodes: Option<Vec<NodeId>>,
+    pub enable_webserver: bool,
+    pub webserver_port: u16,
+    pub systemd_config: SystemdSecretsConfig,
+}
+
+pub struct SupervisorActor;
+
+#[derive(Debug)]
+pub enum SupervisorMessage {
+    Shutdown,
+}
+
+impl Actor for SupervisorActor {
+    type Msg = SupervisorMessage;
+    type State = ();
+    type Arguments = AppConfig;
+
+    async fn pre_start(
+        &self,
+        myself: ActorRef<Self::Msg>,
+        config: Self::Arguments,
+    ) -> Result<Self::State, ActorProcessingErr> {
+        info!("Starting SupervisorActor with linked children");
+
+        // Start all child actors with spawn_linked() - if any die, supervisor dies
+        let (_gossip_actor, _gossip_handle) = Actor::spawn_linked(
+            Some("gossip".into()),
+            actors::gossip::GossipActor,
+            actors::gossip::GossipConfig {
+                bootstrap_nodes: config.bootstrap_nodes,
+            },
+            myself.clone().into(),
+        )
+        .await
+        .map_err(|e| {
+            Box::new(std::io::Error::other(format!(
+                "Failed to start GossipActor: {e}"
+            ))) as ActorProcessingErr
+        })?;
+
+        let (_systemd_actor, _systemd_handle) = Actor::spawn_linked(
+            Some("systemd".into()),
+            actors::systemd::SystemdActor,
+            config.systemd_config,
+            myself.clone().into(),
+        )
+        .await
+        .map_err(|e| {
+            Box::new(std::io::Error::other(format!(
+                "Failed to start SystemdActor: {e}"
+            ))) as ActorProcessingErr
+        })?;
+
+        debug!("Starting web server? {}", config.enable_webserver);
+        if config.enable_webserver {
+            let (_webserver_actor, _webserver_handle) = Actor::spawn_linked(
+                Some("webserver".into()),
+                actors::webserver::WebServerActor,
+                (config.webserver_port, 10),
+                myself.clone().into(),
+            )
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::other(format!(
+                    "Failed to start WebServerActor: {e}"
+                ))) as ActorProcessingErr
+            })?;
+        }
+
+        info!("All actors started successfully");
+        Ok(())
+    }
 }
 
 static SYSTEMD_SECRETS_CONFIG: OnceLock<SystemdSecretsConfig> = OnceLock::new();
@@ -135,39 +209,23 @@ async fn main() -> Result<()> {
         Some(nodes)
     };
 
-    // Create shutdown broadcast channel
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
-
-    // Spawn tasks
-    let mut tasks = Vec::new();
-
-    // Create shared message channel for webserver integration if web server is enabled
-    let (_peer_message_tx, webserver_rx) = if args.start_web {
-        debug!("Creating shared peer message channel for webserver integration");
-        let (tx, rx) = tokio::sync::mpsc::channel::<network::PeerMessage>(100);
-
-        Actor::spawn(
-            Some(actors::webserver::NAME.into()),
-            actors::webserver::WebServerActor,
-            (args.port, 10),
-        )
-        .await?;
-
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
+    // Create application configuration
+    let app_config = AppConfig {
+        bootstrap_nodes,
+        enable_webserver: args.start_web,
+        webserver_port: args.port,
+        systemd_config: SystemdSecretsConfig {
+            path: args.systemd_secrets_path.clone(),
+            user_scope: args.systemd_user_scope,
+        },
     };
 
-    debug!("Starting network manager task");
-    let shutdown_rx = shutdown_tx.subscribe();
-    tasks.push(tokio::spawn(async move {
-        if let Err(e) = network_manager_task(shutdown_rx, bootstrap_nodes, webserver_rx).await {
-            error!("Network manager task error: {}", e);
-        }
-        debug!("Network manager task completed");
-    }));
+    // Start the supervisor actor
+    debug!("Starting SupervisorActor");
+    let (supervisor_actor, supervisor_handle) =
+        Actor::spawn(Some("supervisor".into()), SupervisorActor, app_config).await?;
 
-    debug!("All tasks started, waiting for Ctrl+C...");
+    info!("SupervisorActor started, waiting for Ctrl+C...");
 
     // Wait for Ctrl+C
     tokio::signal::ctrl_c()
@@ -176,24 +234,21 @@ async fn main() -> Result<()> {
 
     info!("Received Ctrl+C, initiating shutdown...");
 
-    // Send shutdown signal to all tasks
-    let _ = shutdown_tx.send(());
+    // Stop the supervisor actor, which will stop all linked actors
+    supervisor_actor.stop(None);
 
-    // Wait for all tasks to complete with timeout
-    let shutdown_result =
-        tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(tasks)).await;
+    // Wait for supervisor to complete shutdown
+    let shutdown_result = tokio::time::timeout(Duration::from_secs(10), supervisor_handle).await;
 
     match shutdown_result {
-        Ok(results) => {
-            for result in results {
-                if let Err(e) = result {
-                    error!("Task panicked: {}", e);
-                }
-            }
-            debug!("All tasks completed successfully");
+        Ok(Ok(())) => {
+            debug!("SupervisorActor shut down cleanly");
+        }
+        Ok(Err(e)) => {
+            error!("SupervisorActor error during shutdown: {:?}", e);
         }
         Err(_) => {
-            warn!("Tasks did not complete within 5 seconds, forcing exit");
+            warn!("SupervisorActor shutdown timed out after 10 seconds");
         }
     }
 

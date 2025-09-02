@@ -580,6 +580,14 @@ impl Secret {
 
         // If this secret is for the current node, write it to systemd
         if let Ok(identity) = Identity::get_or_create().await {
+            let current_node_id = identity.id();
+            tracing::debug!(
+                "Secret::create() systemd sync check: secret='{}', current_node={}, target_node={}, match={}",
+                name,
+                current_node_id,
+                target_node_id,
+                target_node_id == current_node_id
+            );
             if target_node_id == identity.id() {
                 tracing::debug!("Secret '{}' is for current node, syncing to systemd", name);
                 let config = crate::get_systemd_secrets_config()?;
