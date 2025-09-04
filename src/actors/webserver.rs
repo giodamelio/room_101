@@ -71,10 +71,10 @@ impl Actor for WebServerActor {
         (shutdown_tx, server_task_handle, shutdown_timeout): &mut Self::State,
     ) -> std::result::Result<(), ActorProcessingErr> {
         // Send the shutdown signal to the Poem server
-        if let Some(tx) = shutdown_tx.take() {
-            if let Err(e) = tx.send(()) {
-                debug!("Failed to send shutdown signal to Poem ({e:?})");
-            }
+        if let Some(tx) = shutdown_tx.take()
+            && let Err(e) = tx.send(())
+        {
+            debug!("Failed to send shutdown signal to Poem ({e:?})");
         }
 
         // Wait for the server task to actually finish
@@ -1824,7 +1824,7 @@ async fn tmpl_peer_detail(
                 }
             }
         } @else {
-            (tmpl_grouped_secret_list(&secrets, current_node_id, &[peer.clone()]))
+            (tmpl_grouped_secret_list(&secrets, current_node_id, std::slice::from_ref(peer)))
         }
     }).await
 }

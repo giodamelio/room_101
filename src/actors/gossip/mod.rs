@@ -97,10 +97,10 @@ impl Actor for GossipActor {
         debug!("GossipActor shutting down");
 
         // Send the shutdown signal to the networking task
-        if let Some(tx) = state.shutdown_tx.take() {
-            if tx.send(()).is_err() {
-                debug!("Gossip networking task already stopped");
-            }
+        if let Some(tx) = state.shutdown_tx.take()
+            && tx.send(()).is_err()
+        {
+            debug!("Gossip networking task already stopped");
         }
 
         // Wait for the networking task to finish

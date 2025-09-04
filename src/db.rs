@@ -645,11 +645,11 @@ impl Secret {
 
         let was_new = existing.is_none();
 
-        if let Some(existing_secret) = existing {
-            if existing_secret.hash == hash {
-                // Same hash, no update needed
-                return Ok(false);
-            }
+        if let Some(existing_secret) = existing
+            && existing_secret.hash == hash
+        {
+            // Same hash, no update needed
+            return Ok(false);
         }
 
         // Insert or update the secret
@@ -870,18 +870,16 @@ impl Secret {
         let was_deleted = rows_affected > 0;
 
         // If this secret was for the current node, remove it from systemd
-        if was_deleted {
-            if let Ok(identity) = Identity::get_or_create().await {
-                if target_node_id == identity.id() {
-                    let config = crate::get_systemd_secrets_config()?;
-                    let cred_path = format!("{}/{}.cred", config.path, name);
-                    if let Err(e) =
-                        crate::systemd_secrets::delete_secret(name, &cred_path, config.user_scope)
-                            .await
-                    {
-                        tracing::warn!("Failed to delete secret '{}' from systemd: {}", name, e);
-                    }
-                }
+        if was_deleted
+            && let Ok(identity) = Identity::get_or_create().await
+            && target_node_id == identity.id()
+        {
+            let config = crate::get_systemd_secrets_config()?;
+            let cred_path = format!("{}/{}.cred", config.path, name);
+            if let Err(e) =
+                crate::systemd_secrets::delete_secret(name, &cred_path, config.user_scope).await
+            {
+                tracing::warn!("Failed to delete secret '{}' from systemd: {}", name, e);
             }
         }
 
