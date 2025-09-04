@@ -12,6 +12,10 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     crate2nix = {
       url = "github:nix-community/crate2nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -46,7 +50,25 @@
             .claude
           '';
         };
-        room_101Package = pkgs.callPackage ./Cargo.nix {inherit pkgs sourceFilter;};
+
+        # Our own Rust toolchain from Fenix
+        rustToolchain = inputs'.fenix.packages.complete.toolchain;
+
+        # Custom version of Nixpkgs with Rust and Cargo replaced with the Fenix toolchain
+        pkgsWithFenix = import inputs.nixpkgs {
+          inherit system;
+          overlays = [
+            (final: prev: {
+              rust = rustToolchain;
+              cargo = rustToolchain;
+            })
+          ];
+        };
+
+        room_101Package = pkgs.callPackage ./Cargo.nix {
+          inherit sourceFilter;
+          pkgs = pkgsWithFenix;
+        };
       in {
         # Main package
         packages = {
@@ -63,10 +85,7 @@
 
           packages = with pkgs; [
             # Rust toolchain
-            rustc
-            cargo
-            clippy
-            rustfmt
+            rustToolchain
 
             # Development tools
             nil
