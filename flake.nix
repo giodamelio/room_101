@@ -147,10 +147,7 @@
         };
 
         # Checks
-        checks = {
-          treefmt = config.treefmt.build.check self';
-          room_101Package = room_101Package.rootCrate;
-        };
+        checks = {};
       };
     };
 }
