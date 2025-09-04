@@ -52,7 +52,8 @@
         };
 
         # Our own Rust toolchain from Fenix
-        rustToolchain = inputs'.fenix.packages.complete.toolchain;
+        rustNightly = inputs'.fenix.packages.complete;
+        rustToolchain = rustNightly.toolchain;
 
         # Custom version of Nixpkgs with Rust and Cargo replaced with the Fenix toolchain
         pkgsWithFenix = import inputs.nixpkgs {
@@ -123,7 +124,11 @@
           projectRootFile = "flake.nix";
           programs = {
             alejandra.enable = true; # Nix formatter
-            rustfmt.enable = true; # Rust formatter
+            # Rust formatter
+            rustfmt = {
+              enable = true;
+              package = rustToolchain;
+            };
             shfmt.enable = true; # Shell script formatter
           };
         };
@@ -143,6 +148,7 @@
               # Rust linting
               clippy = {
                 enable = true;
+                package = rustNightly.clippy;
                 settings = {
                   denyWarnings = true;
                 };
