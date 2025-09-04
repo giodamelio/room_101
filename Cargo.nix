@@ -89,58 +89,6 @@
     #   inject test dependencies into the build
 
     crates = {
-      "acto" = rec {
-        crateName = "acto";
-        version = "0.7.4";
-        edition = "2021";
-        sha256 = "1fgj88pkiq1315b9q8rdq5c4rrid74y4bnhcyr53p8giljfja9m0";
-        authors = [
-          "Roland Kuhn <rk@rkuhn.info>"
-        ];
-        dependencies = [
-          {
-            name = "parking_lot";
-            packageId = "parking_lot";
-          }
-          {
-            name = "pin-project-lite";
-            packageId = "pin-project-lite";
-          }
-          {
-            name = "smol_str";
-            packageId = "smol_str";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "tokio";
-            packageId = "tokio";
-            optional = true;
-            features = ["rt-multi-thread" "sync"];
-          }
-          {
-            name = "tracing";
-            packageId = "tracing";
-            usesDefaultFeatures = false;
-          }
-        ];
-        buildDependencies = [
-          {
-            name = "rustc_version";
-            packageId = "rustc_version";
-          }
-        ];
-        devDependencies = [
-          {
-            name = "tokio";
-            packageId = "tokio";
-            features = ["rt-multi-thread" "time" "sync"];
-          }
-        ];
-        features = {
-          "tokio" = ["dep:tokio"];
-        };
-        resolvedDefaultFeatures = ["tokio"];
-      };
       "addr2line" = rec {
         crateName = "addr2line";
         version = "0.24.2";
@@ -4940,7 +4888,7 @@
           "wasm-bindgen" = ["dep:wasm-bindgen-crate" "dep:js-sys"];
           "webpki-roots" = ["dep:webpki-roots"];
         };
-        resolvedDefaultFeatures = ["default" "futures-io" "std" "tokio"];
+        resolvedDefaultFeatures = ["futures-io" "std" "tokio"];
       };
       "hickory-resolver" = rec {
         crateName = "hickory-resolver";
@@ -7021,11 +6969,6 @@
             }: (!((builtins.elem "wasm" target."family") && ("unknown" == target."os" or null)));
           }
           {
-            name = "swarm-discovery";
-            packageId = "swarm-discovery";
-            optional = true;
-          }
-          {
             name = "time";
             packageId = "time";
             target = {
@@ -7109,13 +7052,13 @@
           "metrics" = ["iroh-metrics/metrics" "iroh-relay/metrics" "portmapper/metrics"];
           "test-utils" = ["iroh-relay/test-utils" "iroh-relay/server" "dep:axum"];
         };
-        resolvedDefaultFeatures = ["default" "discovery-local-network" "metrics"];
+        resolvedDefaultFeatures = ["default" "metrics"];
       };
       "iroh-base" = rec {
         crateName = "iroh-base";
-        version = "0.91.1";
+        version = "0.91.2";
         edition = "2024";
-        sha256 = "175mrcsvx0gmzcpjjlprzzni8i8436kklpp5mpl7648r2bkf9gbq";
+        sha256 = "0kh3n0aqndk2za1rlncj9kn6jy2z7mlxmdyfrmd7cp4fcbrkyfa2";
         libName = "iroh_base";
         authors = [
           "n0 team"
@@ -7153,6 +7096,13 @@
             packageId = "nested_enum_utils";
           }
           {
+            name = "postcard";
+            packageId = "postcard";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = ["alloc" "use-std" "experimental-derive"];
+          }
+          {
             name = "rand_core";
             packageId = "rand_core 0.6.4";
             optional = true;
@@ -7175,13 +7125,20 @@
             features = ["serde"];
           }
         ];
+        devDependencies = [
+          {
+            name = "postcard";
+            packageId = "postcard";
+            features = ["use-std"];
+          }
+        ];
         features = {
           "default" = ["ticket" "relay"];
           "key" = ["dep:curve25519-dalek" "dep:ed25519-dalek" "dep:url" "dep:derive_more" "dep:snafu" "dep:data-encoding" "dep:rand_core" "relay"];
           "relay" = ["dep:url" "dep:derive_more" "dep:snafu"];
           "ticket" = ["key" "dep:postcard" "dep:data-encoding"];
         };
-        resolvedDefaultFeatures = ["key" "relay"];
+        resolvedDefaultFeatures = ["default" "key" "relay" "ticket"];
       };
       "iroh-gossip" = rec {
         crateName = "iroh-gossip";
@@ -13071,7 +13028,10 @@
           {
             name = "iroh";
             packageId = "iroh";
-            features = ["discovery-local-network"];
+          }
+          {
+            name = "iroh-base";
+            packageId = "iroh-base";
           }
           {
             name = "iroh-gossip";
@@ -14204,21 +14164,6 @@
           "unty" = ["dep:unty"];
         };
         resolvedDefaultFeatures = ["const_generics" "const_new" "serde"];
-      };
-      "smol_str" = rec {
-        crateName = "smol_str";
-        version = "0.1.24";
-        edition = "2018";
-        sha256 = "1j891lgnflvnzgbs7fhwd6sxrrx47ii5mj0yy3f2f9mbrdbwimps";
-        authors = [
-          "Aleksey Kladov <aleksey.kladov@gmail.com>"
-        ];
-        features = {
-          "arbitrary" = ["dep:arbitrary"];
-          "default" = ["std"];
-          "serde" = ["dep:serde"];
-          "std" = ["serde/std"];
-        };
       };
       "snafu" = rec {
         crateName = "snafu";
@@ -15757,52 +15702,6 @@
             features = ["full"];
           }
         ];
-      };
-      "swarm-discovery" = rec {
-        crateName = "swarm-discovery";
-        version = "0.4.0";
-        edition = "2021";
-        sha256 = "03vlb1qizy4chbdqmjlz5nb7ixbm9cf08b7sa1m7r2ai8n537bjf";
-        libName = "swarm_discovery";
-        authors = [
-          "Roland Kuhn"
-        ];
-        dependencies = [
-          {
-            name = "acto";
-            packageId = "acto";
-            features = ["tokio"];
-          }
-          {
-            name = "hickory-proto";
-            packageId = "hickory-proto";
-          }
-          {
-            name = "rand";
-            packageId = "rand 0.9.2";
-          }
-          {
-            name = "socket2";
-            packageId = "socket2 0.5.10";
-            features = ["all"];
-          }
-          {
-            name = "thiserror";
-            packageId = "thiserror 2.0.12";
-          }
-          {
-            name = "tokio";
-            packageId = "tokio";
-            features = ["macros" "net" "rt" "time"];
-          }
-          {
-            name = "tracing";
-            packageId = "tracing";
-          }
-        ];
-        features = {
-          "serde" = ["dep:serde"];
-        };
       };
       "syn 1.0.109" = rec {
         crateName = "syn";

@@ -6,6 +6,7 @@ use age::{Decryptor, Encryptor};
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use iroh::{NodeId, SecretKey};
+use iroh_base::ticket::NodeTicket;
 use rand::rngs;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -291,15 +292,15 @@ impl Peer {
         Ok(())
     }
 
-    pub async fn insert_bootstrap_nodes(nodes: Vec<NodeId>) -> anyhow::Result<()> {
+    pub async fn insert_bootstrap_nodes(nodes: Vec<NodeTicket>) -> anyhow::Result<()> {
         let db = get_db()?;
         let mut tx = db.begin().await?;
 
-        for node_id in nodes {
-            let node_id_str = node_id_to_string(&node_id);
+        for node_ticket in nodes {
+            let node_ticket_string = node_ticket.to_string();
             sqlx::query!(
                 "INSERT OR IGNORE INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)",
-                node_id_str,
+                node_ticket_string,
                 None::<NaiveDateTime>,
                 None::<String>,
                 None::<String>

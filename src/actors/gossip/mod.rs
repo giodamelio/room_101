@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use iroh::protocol::Router;
 use iroh::{Endpoint, NodeId, Watcher};
+use iroh_base::ticket::NodeTicket;
 use iroh_gossip::{ALPN, net::Gossip, proto::TopicId};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tokio::sync::{mpsc, oneshot};
@@ -20,7 +21,7 @@ const PEER_TOPIC: TopicId = topic_id!("PEER_TOPIC");
 
 #[derive(Debug, Clone)]
 pub struct GossipConfig {
-    pub bootstrap_nodes: Option<Vec<NodeId>>,
+    pub bootstrap_nodes: Option<Vec<NodeTicket>>,
 }
 
 pub struct GossipActor;
@@ -156,18 +157,22 @@ async fn run_gossip_networking(
     let endpoint = Endpoint::builder()
         .secret_key(identity.secret_key.clone())
         .discovery_n0() // Enable N0 discovery for internet connectivity
-        .discovery_local_network() // Enable mDNS discovery for LAN connectivity
         .bind()
         .await
         .context("Failed to create iroh endpoint")?;
 
     let mut node_addr_watcher = endpoint.node_addr();
     let node_addr = node_addr_watcher.initialized().await;
+    let ticket = NodeTicket::new(node_addr.clone());
     info!(
+        ticket = ?ticket.to_string(),
+        "Node endpoint initialized"
+    );
+    debug!(
         node_id = %node_addr.node_id,
         addresses = ?node_addr.direct_addresses,
         relay_url = ?node_addr.relay_url,
-        "Node endpoint initialized"
+        "Endpoint details"
     );
 
     // Create gossip instance using builder pattern

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use iroh::NodeId;
+use iroh_base::ticket::NodeTicket;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use std::sync::OnceLock;
 use std::time::Duration;
+use std::{str::FromStr, sync::OnceLock};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -24,7 +24,7 @@ pub struct SystemdSecretsConfig {
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
-    pub bootstrap_nodes: Option<Vec<NodeId>>,
+    pub bootstrap_nodes: Option<Vec<NodeTicket>>,
     pub enable_webserver: bool,
     pub webserver_port: u16,
     pub systemd_config: SystemdSecretsConfig,
@@ -111,7 +111,7 @@ pub fn get_systemd_secrets_config() -> anyhow::Result<&'static SystemdSecretsCon
 #[command(name = "room_101")]
 #[command(about = "A peer-to-peer networking application")]
 struct Args {
-    /// Bootstrap node IDs to connect to (hex strings)
+    /// Tickets of bootstrap nodes to connect to connect to (hex strings)
     bootstrap: Vec<String>,
 
     /// Start the web server
@@ -199,12 +199,10 @@ async fn main() -> Result<()> {
     let bootstrap_nodes = if args.bootstrap.is_empty() {
         None
     } else {
-        let mut nodes = Vec::new();
-        for node_str in args.bootstrap {
-            let node_id: NodeId = node_str
-                .parse()
-                .with_context(|| format!("Invalid node ID format: {node_str}"))?;
-            nodes.push(node_id);
+        let mut nodes: Vec<NodeTicket> = Vec::new();
+        for ticket_str in args.bootstrap {
+            let ticket = NodeTicket::from_str(&ticket_str)?;
+            nodes.push(ticket);
         }
         Some(nodes)
     };
