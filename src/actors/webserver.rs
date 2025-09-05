@@ -289,6 +289,9 @@ fn layout(content: Markup) -> Markup {
     html! {
         (DOCTYPE)
         meta name="htmx-config" content=r#"{"responseHandling":[{"code":".*", "swap": true}]}"#;
+        meta name="viewport" content="width=device-width, initial-scale=1.0";
+
+        script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" {};
         script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js" {};
         body style="font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5;" {
             (content)
@@ -299,7 +302,9 @@ fn layout(content: Markup) -> Markup {
 fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
     html! {
         @if peers.is_empty() {
-            (empty_state("📡", "No peers connected", "Add a peer below to get started with the network."))
+            div id="peer-list" {
+                (empty_state("📡", "No peers connected", "Add a peer below to get started with the network."))
+            }
         } @else {
             div id="peer-list" style="display: flex; flex-direction: column; gap: 16px;" {
                 @for peer in peers {
