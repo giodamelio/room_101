@@ -1,5 +1,13 @@
 use maud::{Markup, html};
 
+pub fn button_link(text: &str, href: &str, color: &str) -> Markup {
+    html! {
+        a href=(href) style={"display: inline-block; padding: 10px 20px; background: " (color) "; color: white; text-decoration: none; border-radius: 5px;"} {
+            (text)
+        }
+    }
+}
+
 // Top navbar component
 pub fn navbar(
     current_page: &str,

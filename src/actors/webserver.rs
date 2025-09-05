@@ -3,6 +3,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use chrono_humanize::HumanTime;
 use iroh::NodeId;
+use iroh_base::ticket::NodeTicket;
 use maud::{DOCTYPE, Markup, html};
 use poem::{
     Body, Endpoint, EndpointExt, IntoResponse, Route, Server, get, handler, listener::TcpListener,
@@ -424,6 +425,13 @@ async fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Result<Ma
         html! {
             h1 { "Peers" }
 
+            h2 { "Add New Peer" }
+            div id="error-message" style="color: red; margin-bottom: 10px;" {}
+            form method="POST" action="/peers" hx-post="/peers" hx-target="#peer-list" hx-swap="outerHTML" style="margin-bottom: 20px;" {
+                input type="text" name="ticket" placeholder="Node ID" required;
+                input type="submit" value="Add Peer";
+            }
+
             h2 style="margin-bottom: 12px;" { "This Node" }
             div style="background: #f0f9ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 16px; margin-bottom: 24px;" {
                 div style="display: flex; align-items: center; margin-bottom: 12px;" {
@@ -443,13 +451,6 @@ async fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Result<Ma
                     span style="margin-right: 6px;" { "🔗" }
                     span { "Your local node - always connected" }
                 }
-            }
-
-            h2 { "Add New Peer" }
-            div id="error-message" style="color: red; margin-bottom: 10px;" {}
-            form method="POST" action="/peers" hx-post="/peers" hx-target="#peer-list" hx-swap="outerHTML" style="margin-bottom: 20px;" {
-                input type="text" name="id" placeholder="Node ID" required;
-                input type="submit" value="Add Peer";
             }
 
             h2 { "Network Peers" }
@@ -678,9 +679,7 @@ async fn tmpl_list_grouped_secrets(
             }
 
             div style="margin-bottom: 20px;" {
-                a href="/secrets/new" style="display: inline-block; padding: 10px 20px; background: #2563eb; color: white; text-decoration: none; border-radius: 5px;" {
-                    "➕ Add Secret"
-                }
+                (button_link("➕ Add Secret", "/secrets/new", "#2563eb"))
             }
 
             (tmpl_grouped_secret_list(&grouped_secrets, current_node_id, &peers))
@@ -1614,7 +1613,7 @@ async fn create_secret(body: Body) -> Result<Markup> {
 
 #[derive(Deserialize, Debug)]
 struct CreatePeer {
-    id: String,
+    ticket: NodeTicket,
 }
 
 #[derive(Deserialize, Debug)]
@@ -1624,14 +1623,10 @@ struct SecretsQuery {
 
 #[handler]
 async fn create_peer(form: poem::Result<Form<CreatePeer>>) -> Result<Markup> {
-    let Form(CreatePeer { id }) =
+    let Form(CreatePeer { ticket }) =
         form.map_err(|e| AppError::BadRequest(format!("Invalid form data: {e}")))?;
 
-    let node_id = id
-        .parse::<NodeId>()
-        .map_err(|e| AppError::BadRequest(format!("Invalid Node ID format: {e}")))?;
-
-    Peer::create(node_id)
+    Peer::create(ticket.node_addr().node_id)
         .await
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 

@@ -26,10 +26,6 @@ fn secret_key_from_hex(hex_str: &str) -> Result<SecretKey> {
     Ok(secret_key)
 }
 
-fn node_id_to_string(node_id: &NodeId) -> String {
-    node_id.to_string()
-}
-
 fn node_id_from_string(s: &str) -> Result<NodeId> {
     Ok(s.parse::<NodeId>()?)
 }
@@ -254,7 +250,7 @@ impl Peer {
 
     pub async fn create(node_id: NodeId) -> anyhow::Result<()> {
         let db = get_db()?;
-        let node_id_str = node_id_to_string(&node_id);
+        let node_id_str = node_id.to_string();
         sqlx::query!(
             "INSERT INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)",
             node_id_str,
@@ -274,7 +270,7 @@ impl Peer {
         age_public_key: Option<String>,
     ) -> anyhow::Result<()> {
         let db = get_db()?;
-        let node_id_str = node_id_to_string(&node_id);
+        let node_id_str = node_id.to_string();
         let last_seen_naive = last_seen.map(|dt| dt.naive_utc());
         sqlx::query!(
             "INSERT INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)
@@ -510,7 +506,7 @@ impl GroupedSecret {
     }
 
     pub fn has_target_node(&self, target_node_id: &NodeId) -> bool {
-        let target_str = node_id_to_string(target_node_id);
+        let target_str = target_node_id.to_string();
         self.get_target_node_ids().contains(&target_str)
     }
 
@@ -538,7 +534,7 @@ impl Secret {
 
         let hash = compute_hash(secret_content);
         let encrypted_data = encrypt_secret_for_node(secret_content, target_node_id).await?;
-        let target_node_id_str = node_id_to_string(&target_node_id);
+        let target_node_id_str = target_node_id.to_string();
         let now = Utc::now().naive_utc();
 
         let db = get_db()?;
@@ -630,7 +626,7 @@ impl Secret {
     ) -> Result<bool> {
         validate_secret_name(&name)?;
 
-        let target_node_id_str = node_id_to_string(&target_node_id);
+        let target_node_id_str = target_node_id.to_string();
         let now = Utc::now().naive_utc();
 
         let db = get_db()?;
@@ -856,7 +852,7 @@ impl Secret {
 
     pub async fn delete(name: &str, hash: &str, target_node_id: NodeId) -> Result<bool> {
         let db = get_db()?;
-        let target_node_id_str = node_id_to_string(&target_node_id);
+        let target_node_id_str = target_node_id.to_string();
 
         let rows_affected = sqlx::query!(
             "DELETE FROM secrets WHERE name = ? AND hash = ? AND target_node_id = ?",
