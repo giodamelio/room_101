@@ -8,6 +8,7 @@ CREATE TABLE identities (
 -- Peers table - stores known network peers
 CREATE TABLE peers (
     node_id TEXT NOT NULL PRIMARY KEY, -- NodeId as string
+    ticket TEXT NOT NULL,
     last_seen DATETIME, -- UTC datetime
     hostname TEXT
 );

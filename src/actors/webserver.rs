@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use chrono_humanize::HumanTime;
+use iroh::NodeAddr;
 use iroh::NodeId;
 use iroh_base::ticket::NodeTicket;
 use maud::{DOCTYPE, Markup, html};
@@ -1631,7 +1632,7 @@ async fn create_peer(form: poem::Result<Form<CreatePeer>>) -> Result<Markup> {
     let Form(CreatePeer { ticket }) =
         form.map_err(|e| AppError::BadRequest(format!("Invalid form data: {e}")))?;
 
-    Peer::create(ticket.node_addr().node_id)
+    Peer::create(ticket)
         .await
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
@@ -1843,6 +1844,8 @@ async fn get_peer_detail(poem::web::Path(node_id): poem::web::Path<String>) -> R
         // Create a virtual peer entry for the current node
         Peer {
             node_id: node_id.clone(),
+            // TODO: make this our real local ticket from the endpoint
+            ticket: NodeTicket::new(NodeAddr::new(parsed_node_id)).to_string(),
             last_seen: Some(chrono::Utc::now().naive_utc()), // Always "connected"
             hostname: crate::actors::gossip::get_hostname(),
             age_public_key: Some(crate::db::age_public_key_to_string(&identity.age_key)),

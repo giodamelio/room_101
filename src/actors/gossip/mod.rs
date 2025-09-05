@@ -238,6 +238,7 @@ async fn run_gossip_networking(
     // Send leaving message before shutdown
     let leaving_message = PeerMessage::Leaving {
         node_id: identity.id(),
+        ticket: identity.ticket(),
         time: Utc::now(),
     };
 
@@ -335,6 +336,7 @@ async fn setup_gossip_subscription(
     // Send our joined message
     let joined_message = PeerMessage::Joined {
         node_id: identity.id(),
+        ticket: identity.ticket(),
         time: Utc::now(),
         hostname: get_hostname(),
         age_public_key: age_public_key_to_string(&identity.age_key),

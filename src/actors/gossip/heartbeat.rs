@@ -16,6 +16,7 @@ pub async fn start_heartbeat_loop(identity: Identity, gossip_actor: ActorRef<Gos
 
         let heartbeat_message = PeerMessage::Heartbeat {
             node_id: identity.id(),
+            ticket: identity.ticket(),
             time: Utc::now(),
             age_public_key: age_public_key_to_string(&identity.age_key),
         };

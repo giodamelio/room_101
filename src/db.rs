@@ -5,7 +5,7 @@ use age::x25519::Identity as AgeIdentity;
 use age::{Decryptor, Encryptor};
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use iroh::{NodeId, SecretKey};
+use iroh::{NodeAddr, NodeId, SecretKey};
 use iroh_base::ticket::NodeTicket;
 use rand::rngs;
 use serde::{Deserialize, Serialize};
@@ -153,6 +153,11 @@ impl Identity {
         self.secret_key.public()
     }
 
+    // TODO: make this a real ticket from the endpoint
+    pub fn ticket(&self) -> NodeTicket {
+        NodeTicket::new(NodeAddr::new(self.id()))
+    }
+
     pub async fn get() -> anyhow::Result<Self> {
         let db = get_db()?;
 
@@ -225,7 +230,8 @@ impl Identity {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Peer {
-    pub node_id: String,                  // NodeId as string
+    pub node_id: String, // NodeId as string
+    pub ticket: String,
     pub last_seen: Option<NaiveDateTime>, // SQLite datetime
     pub hostname: Option<String>,
     pub age_public_key: Option<String>, // Age public key as string
@@ -236,7 +242,7 @@ impl Peer {
         let db = get_db()?;
         let peers = sqlx::query_as!(
             Peer,
-            "SELECT node_id, last_seen, hostname, age_public_key FROM peers ORDER BY last_seen DESC"
+            "SELECT node_id, ticket, last_seen, hostname, age_public_key FROM peers ORDER BY last_seen DESC"
         )
         .fetch_all(db)
         .await?;
@@ -248,12 +254,14 @@ impl Peer {
             .map(|naive| DateTime::from_naive_utc_and_offset(naive, Utc))
     }
 
-    pub async fn create(node_id: NodeId) -> anyhow::Result<()> {
+    pub async fn create(ticket: NodeTicket) -> anyhow::Result<()> {
         let db = get_db()?;
-        let node_id_str = node_id.to_string();
+        let node_id_str = ticket.node_addr().node_id.to_string();
+        let ticket_str = ticket.to_string();
         sqlx::query!(
-            "INSERT INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)",
+            "INSERT INTO peers (node_id, ticket, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?, ?)",
             node_id_str,
+            ticket_str,
             None::<NaiveDateTime>,
             None::<String>,
             None::<String>
@@ -265,6 +273,7 @@ impl Peer {
 
     pub async fn upsert_peer(
         node_id: NodeId,
+        ticket: NodeTicket,
         last_seen: Option<DateTime<Utc>>,
         hostname: Option<String>,
         age_public_key: Option<String>,
@@ -272,13 +281,15 @@ impl Peer {
         let db = get_db()?;
         let node_id_str = node_id.to_string();
         let last_seen_naive = last_seen.map(|dt| dt.naive_utc());
+        let ticket_str = ticket.to_string();
         sqlx::query!(
-            "INSERT INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)
+            "INSERT INTO peers (node_id, ticket, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(node_id) DO UPDATE SET
              last_seen = COALESCE(excluded.last_seen, peers.last_seen),
              hostname = COALESCE(excluded.hostname, peers.hostname),
              age_public_key = COALESCE(excluded.age_public_key, peers.age_public_key)",
             node_id_str,
+            ticket_str,
             last_seen_naive,
             hostname,
             age_public_key
@@ -293,10 +304,12 @@ impl Peer {
         let mut tx = db.begin().await?;
 
         for node_ticket in nodes {
-            let node_ticket_string = node_ticket.to_string();
+            let node_id_str = node_ticket.node_addr().node_id.to_string();
+            let ticket_str = node_ticket.to_string();
             sqlx::query!(
-                "INSERT OR IGNORE INTO peers (node_id, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?)",
-                node_ticket_string,
+                "INSERT OR IGNORE INTO peers (node_id, ticket, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?, ?)",
+                node_id_str,
+                ticket_str,
                 None::<NaiveDateTime>,
                 None::<String>,
                 None::<String>
@@ -327,7 +340,7 @@ impl Peer {
         let db = get_db()?;
         let peer = sqlx::query_as!(
             Peer,
-            "SELECT node_id, last_seen, hostname, age_public_key FROM peers WHERE node_id = ?",
+            "SELECT node_id, ticket, last_seen, hostname, age_public_key FROM peers WHERE node_id = ?",
             node_id
         )
         .fetch_optional(db)

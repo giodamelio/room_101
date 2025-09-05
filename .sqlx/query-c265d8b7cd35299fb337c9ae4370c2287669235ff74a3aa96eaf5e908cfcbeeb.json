@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO peers (node_id, ticket, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "c265d8b7cd35299fb337c9ae4370c2287669235ff74a3aa96eaf5e908cfcbeeb"
+}

@@ -86,6 +86,7 @@ async fn handle_received_message(
     match message {
         PeerMessage::Joined {
             node_id,
+            ticket,
             time,
             hostname,
             age_public_key,
@@ -97,8 +98,14 @@ async fn handle_received_message(
             );
 
             // Add the peer to the database
-            if let Err(e) =
-                Peer::upsert_peer(node_id, Some(time), hostname.clone(), Some(age_public_key)).await
+            if let Err(e) = Peer::upsert_peer(
+                node_id,
+                ticket,
+                Some(time),
+                hostname.clone(),
+                Some(age_public_key),
+            )
+            .await
             {
                 debug!("Failed to upsert peer {node_id} to database: {e}");
             } else {
@@ -108,6 +115,7 @@ async fn handle_received_message(
             // Send our introduction to the network so the new peer gets our age key
             let introduction_message = PeerMessage::Introduction {
                 node_id: identity.id(),
+                ticket: identity.ticket(),
                 time: Utc::now(),
                 hostname: get_hostname(),
                 age_public_key: age_public_key_to_string(&identity.age_key),
@@ -128,29 +136,36 @@ async fn handle_received_message(
                 Err(e) => error!("❌ Failed to send secrets to new node {}: {}", node_id, e),
             }
         }
-        PeerMessage::Leaving { node_id, time } => {
+        PeerMessage::Leaving {
+            node_id,
+            ticket,
+            time,
+        } => {
             trace!(%node_id, %time, "Handling PeerMessage::Leaving");
 
             // Update last_seen time when they leave
-            if let Err(e) = Peer::upsert_peer(node_id, Some(time), None, None).await {
+            if let Err(e) = Peer::upsert_peer(node_id, ticket, Some(time), None, None).await {
                 debug!("Failed to update peer {node_id} last_seen time: {e}");
             }
         }
         PeerMessage::Heartbeat {
             node_id,
+            ticket,
             time,
             age_public_key,
         } => {
             trace!(%node_id, %time, "Handling PeerMessage::Heartbeat");
 
             // Update last_seen time and age key on heartbeat
-            if let Err(e) = Peer::upsert_peer(node_id, Some(time), None, Some(age_public_key)).await
+            if let Err(e) =
+                Peer::upsert_peer(node_id, ticket, Some(time), None, Some(age_public_key)).await
             {
                 debug!("Failed to update peer {node_id} heartbeat time: {e}");
             }
         }
         PeerMessage::Introduction {
             ref node_id,
+            ref ticket,
             ref time,
             ref hostname,
             ref age_public_key,
@@ -169,6 +184,7 @@ async fn handle_received_message(
             // Update last_seen time on introduction
             if let Err(e) = Peer::upsert_peer(
                 *node_id,
+                ticket.clone(),
                 Some(*time),
                 hostname.clone(),
                 Some(age_public_key.clone()),
@@ -340,7 +356,7 @@ async fn handle_received_message(
                 }
             }
         }
-        PeerMessage::SecretSyncRequest { node_id, time } => {
+        PeerMessage::SecretSyncRequest { node_id, time, .. } => {
             trace!(%node_id, %time, "Handling PeerMessage::SecretSyncRequest");
 
             // Only handle sync requests for our own node

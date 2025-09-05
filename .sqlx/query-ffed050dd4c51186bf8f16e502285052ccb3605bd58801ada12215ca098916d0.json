@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO peers (node_id, ticket, last_seen, hostname, age_public_key) VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "ffed050dd4c51186bf8f16e502285052ccb3605bd58801ada12215ca098916d0"
+}

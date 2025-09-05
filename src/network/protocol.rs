@@ -5,6 +5,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::Signature;
 use iroh::{NodeId, PublicKey, SecretKey};
+use iroh_base::ticket::NodeTicket;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,6 +53,7 @@ pub enum PeerMessage {
     #[serde(rename = "JOINED")]
     Joined {
         node_id: NodeId,
+        ticket: NodeTicket,
         time: DateTime<Utc>,
         hostname: Option<String>,
         age_public_key: String,
@@ -59,11 +61,13 @@ pub enum PeerMessage {
     #[serde(rename = "LEAVING")]
     Leaving {
         node_id: NodeId,
+        ticket: NodeTicket,
         time: DateTime<Utc>,
     },
     #[serde(rename = "INTRODUCTION")]
     Introduction {
         node_id: NodeId,
+        ticket: NodeTicket,
         time: DateTime<Utc>,
         hostname: Option<String>,
         age_public_key: String,
@@ -71,6 +75,7 @@ pub enum PeerMessage {
     #[serde(rename = "HEARTBEAT")]
     Heartbeat {
         node_id: NodeId,
+        ticket: NodeTicket,
         time: DateTime<Utc>,
         age_public_key: String,
     },
