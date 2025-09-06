@@ -1,5 +1,3 @@
-#![feature(trait_alias)]
-
 use anyhow::{Context, Result};
 use clap::Parser;
 use iroh_base::ticket::NodeTicket;
