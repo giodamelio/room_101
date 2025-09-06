@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result, bail};
 use distributed_topic_tracker::{
     AutoDiscoveryGossip, GossipReceiver, GossipSender, RecordPublisher, TopicId,
@@ -70,11 +72,15 @@ impl Actor for IrohActor {
                             .send_message(GossipSenderMessage::JoinPeers(bootstrap_node_ids))?;
                     }
 
-                    // Send some test messages to the gossip
-                    gossip_sender_ref.send_message(GossipMessage::Ping.into())?;
-                    gossip_sender_ref.send_message(GossipMessage::Pong.into())?;
-                    gossip_sender_ref.send_message(GossipMessage::Ping.into())?;
-                    gossip_sender_ref.send_message(GossipMessage::Pong.into())?;
+                    // Start the heartbeat
+                    Actor::spawn_linked(
+                        Some("heartbeat".into()),
+                        super::heartbeat::HeartbeatActor,
+                        Duration::from_secs(1),
+                        myself.clone().into(),
+                    )
+                    .await
+                    .context("Failed to start Heartbeat Actor")?;
 
                     Ok(())
                 }
