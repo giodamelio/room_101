@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
+use iroh::node_info::NodeIdExt;
 use iroh::protocol::Router;
 use iroh::{Endpoint, NodeId, Watcher};
 use iroh_base::ticket::NodeTicket;
@@ -172,6 +173,7 @@ async fn run_gossip_networking(
         node_id = %node_addr.node_id,
         addresses = ?node_addr.direct_addresses,
         relay_url = ?node_addr.relay_url,
+        z32_id = ?node_addr.node_id.to_z32(),
         "Endpoint details"
     );
 
