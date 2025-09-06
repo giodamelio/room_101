@@ -49,52 +49,68 @@ impl Actor for SupervisorActor {
     ) -> Result<Self::State, ActorProcessingErr> {
         info!("Starting SupervisorActor with linked children");
 
-        // Start all child actors with spawn_linked() - if any die, supervisor dies
-        let (_gossip_actor, _gossip_handle) = Actor::spawn_linked(
-            Some("gossip".into()),
-            actors::gossip::GossipActor,
-            actors::gossip::GossipConfig {
-                bootstrap_nodes: config.bootstrap_nodes,
-            },
+        // Convert the list of bootstrap tickets into a list of node_ids
+        let bootstrap_peer_node_ids = config
+            .bootstrap_nodes
+            .unwrap_or(vec![])
+            .into_iter()
+            .map(|ticket| ticket.node_addr().node_id)
+            .collect();
+
+        let (_iroh_actor, _iroh_handle) = Actor::spawn_linked(
+            Some("iroh".into()),
+            actors::gossip2::iroh::IrohActor,
+            (bootstrap_peer_node_ids,),
             myself.clone().into(),
         )
-        .await
-        .map_err(|e| {
-            Box::new(std::io::Error::other(format!(
-                "Failed to start GossipActor: {e}"
-            ))) as ActorProcessingErr
-        })?;
+        .await?;
 
-        let (_systemd_actor, _systemd_handle) = Actor::spawn_linked(
-            Some("systemd".into()),
-            actors::systemd::SystemdActor,
-            config.systemd_config,
-            myself.clone().into(),
-        )
-        .await
-        .map_err(|e| {
-            Box::new(std::io::Error::other(format!(
-                "Failed to start SystemdActor: {e}"
-            ))) as ActorProcessingErr
-        })?;
-
-        debug!("Starting web server? {}", config.enable_webserver);
-        if config.enable_webserver {
-            let (_webserver_actor, _webserver_handle) = Actor::spawn_linked(
-                Some("webserver".into()),
-                actors::webserver::WebServerActor,
-                (config.webserver_port, 10),
-                myself.clone().into(),
-            )
-            .await
-            .map_err(|e| {
-                Box::new(std::io::Error::other(format!(
-                    "Failed to start WebServerActor: {e}"
-                ))) as ActorProcessingErr
-            })?;
-        }
-
-        info!("All actors started successfully");
+        // // Start all child actors with spawn_linked() - if any die, supervisor dies
+        // let (_gossip_actor, _gossip_handle) = Actor::spawn_linked(
+        //     Some("gossip".into()),
+        //     actors::gossip::GossipActor,
+        //     actors::gossip::GossipConfig {
+        //         bootstrap_nodes: config.bootstrap_nodes,
+        //     },
+        //     myself.clone().into(),
+        // )
+        // .await
+        // .map_err(|e| {
+        //     Box::new(std::io::Error::other(format!(
+        //         "Failed to start GossipActor: {e}"
+        //     ))) as ActorProcessingErr
+        // })?;
+        //
+        // let (_systemd_actor, _systemd_handle) = Actor::spawn_linked(
+        //     Some("systemd".into()),
+        //     actors::systemd::SystemdActor,
+        //     config.systemd_config,
+        //     myself.clone().into(),
+        // )
+        // .await
+        // .map_err(|e| {
+        //     Box::new(std::io::Error::other(format!(
+        //         "Failed to start SystemdActor: {e}"
+        //     ))) as ActorProcessingErr
+        // })?;
+        //
+        // debug!("Starting web server? {}", config.enable_webserver);
+        // if config.enable_webserver {
+        //     let (_webserver_actor, _webserver_handle) = Actor::spawn_linked(
+        //         Some("webserver".into()),
+        //         actors::webserver::WebServerActor,
+        //         (config.webserver_port, 10),
+        //         myself.clone().into(),
+        //     )
+        //     .await
+        //     .map_err(|e| {
+        //         Box::new(std::io::Error::other(format!(
+        //             "Failed to start WebServerActor: {e}"
+        //         ))) as ActorProcessingErr
+        //     })?;
+        // }
+        //
+        // info!("All actors started successfully");
         Ok(())
     }
 }
