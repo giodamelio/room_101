@@ -75,6 +75,16 @@
         packages = {
           default = room_101Package.rootCrate.build;
           room_101 = room_101Package.rootCrate.build;
+
+          # Check for the discovery DNS records
+          dns_check = pkgs.writeShellApplication {
+            name = "dns_check";
+            runtimeInputs = with pkgs; [dogdns];
+            text = ''
+              read -r -p "Enter Z32 Node ID: " Z32_ID
+              dog "_iroh.''${Z32_ID}.dns.iroh.link" TXT
+            '';
+          };
         };
 
         # Development shell
@@ -100,6 +110,9 @@
 
             # System dependencies
             pkg-config
+
+            # Helper Scripts
+            self'.packages.dns_check
           ];
 
           shellHook = ''
