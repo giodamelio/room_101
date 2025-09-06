@@ -96,6 +96,7 @@
             litecli
             crate2nix
             nix-output-monitor
+            dogdns
 
             # System dependencies
             pkg-config
