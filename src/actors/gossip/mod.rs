@@ -325,7 +325,7 @@ async fn setup_gossip_subscription(
     );
 
     let (peer_sender, peer_receiver) = gossip
-        .subscribe_and_join(PEER_TOPIC, peers)
+        .subscribe(PEER_TOPIC, peers)
         .await
         .context("Failed to subscribe to gossip topic")?
         .split();
