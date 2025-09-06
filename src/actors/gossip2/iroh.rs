@@ -35,8 +35,9 @@ impl Actor for IrohActor {
 
         let topic_id = TopicId::new("ROOM_101".to_string());
 
+        let bootstrap_node_ids_prime = bootstrap_node_ids.clone();
         let handle = tokio::spawn(async move {
-            match run_iroh_network(topic_id.clone()).await {
+            match run_iroh_network(topic_id.clone(), bootstrap_node_ids_prime).await {
                 Err(err) => {
                     bail!(err.context("Iroh Actor Failed"));
                 }
@@ -95,7 +96,10 @@ impl Actor for IrohActor {
     }
 }
 
-async fn run_iroh_network(topic_id: TopicId) -> Result<(GossipSender, GossipReceiver)> {
+async fn run_iroh_network(
+    topic_id: TopicId,
+    bootstrap_node_ids: Vec<NodeId>,
+) -> Result<(GossipSender, GossipReceiver)> {
     // Generate a new random secret key
     // TODO: this should come in via the args
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -125,9 +129,16 @@ async fn run_iroh_network(topic_id: TopicId) -> Result<(GossipSender, GossipRece
         initial_secret,
     );
 
-    let topic = gossip
-        .subscribe_and_join_with_auto_discovery_no_wait(record_publisher)
-        .await?;
+    // If we don't have any bootstrap peers don't wait
+    let topic = if bootstrap_node_ids.is_empty() {
+        gossip
+            .subscribe_and_join_with_auto_discovery_no_wait(record_publisher)
+            .await?
+    } else {
+        gossip
+            .subscribe_and_join_with_auto_discovery(record_publisher)
+            .await?
+    };
 
     topic.split().await
 }
