@@ -75,6 +75,8 @@
         packages = {
           default = room_101Package.rootCrate.build;
           room_101 = room_101Package.rootCrate.build;
+          # dioxus-cli = pkgsWithFenix.callPackage ./dioxus-cli.nix {};
+          dioxus-cli = pkgs.callPackage ./dioxus-cli.nix {};
         };
 
         # Development shell
@@ -96,6 +98,11 @@
             litecli
             crate2nix
             nix-output-monitor
+            self'.packages.dioxus-cli
+            # cargo-binutils # We need ld for the hot reloading
+            # gcc
+            clang
+            mold
 
             # System dependencies
             pkg-config

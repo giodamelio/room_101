@@ -109,7 +109,7 @@ pub fn get_systemd_secrets_config() -> anyhow::Result<&'static SystemdSecretsCon
         .ok_or_else(|| anyhow::anyhow!("SystemdSecretsConfig not initialized"))
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(name = "room_101")]
 #[command(about = "A peer-to-peer networking application")]
 struct Args {
@@ -117,7 +117,8 @@ struct Args {
     bootstrap: Vec<String>,
 
     /// Start the web server
-    #[arg(long)]
+    // TODO: remove this temporary default
+    #[arg(long, default_value = "true")]
     start_web: bool,
 
     /// Web server port (default: 3000)
@@ -125,7 +126,8 @@ struct Args {
     port: u16,
 
     /// Path to SQLite database file
-    #[arg(long)]
+    // TODO: remove this temporary default
+    #[arg(long, default_value = "./1.db")]
     db_path: String,
 
     /// Directory to store systemd credentials (default: /var/lib/credstore)
@@ -162,6 +164,12 @@ async fn main() -> Result<()> {
     // Initialize tracing first
     setup_tracing()?;
 
+    dioxus_devtools::serve_subsecond(wrapped_main).await;
+
+    Ok(())
+}
+
+async fn wrapped_main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
 
@@ -198,7 +206,7 @@ async fn main() -> Result<()> {
         .context("Failed to initialize database")?;
 
     // Parse bootstrap node strings into NodeIDs
-    let bootstrap_nodes = if args.bootstrap.is_empty() {
+    let bootstrap_nodes = if args.bootstrap.is_empty() || args.bootstrap == vec![""] {
         None
     } else {
         let mut nodes: Vec<NodeTicket> = Vec::new();
