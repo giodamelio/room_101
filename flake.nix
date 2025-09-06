@@ -66,7 +66,7 @@
           ];
         };
 
-        room_101Package = pkgs.callPackage ./Cargo.nix {
+        room_101Package = pkgsWithFenix.callPackage ./Cargo.nix {
           inherit sourceFilter;
           pkgs = pkgsWithFenix;
         };
