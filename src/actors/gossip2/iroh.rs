@@ -111,14 +111,14 @@ impl Actor for IrohActor {
         }
 
         // Start the heartbeat
-        // Actor::spawn_linked(
-        //     Some("heartbeat".into()),
-        //     super::heartbeat::HeartbeatActor,
-        //     Duration::from_secs(1),
-        //     myself.clone().into(),
-        // )
-        // .await
-        // .context("Failed to start Heartbeat Actor")?;
+        Actor::spawn_linked(
+            Some("heartbeat".into()),
+            super::heartbeat::HeartbeatActor,
+            (Duration::from_secs(10), gossip_sender_ref.clone()),
+            myself.clone().into(),
+        )
+        .await
+        .context("Failed to start Heartbeat Actor")?;
 
         Ok(IrohState { router, gossip })
     }

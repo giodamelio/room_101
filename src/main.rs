@@ -49,7 +49,7 @@ impl Actor for SupervisorActor {
     ) -> Result<Self::State, ActorProcessingErr> {
         info!("Starting SupervisorActor with linked children");
 
-        // Convert the list of bootstrap tickets into a list of node addresses  
+        // Convert the list of bootstrap tickets into a list of node addresses
         let bootstrap_peer_node_addrs = config
             .bootstrap_nodes
             .unwrap_or(vec![])
