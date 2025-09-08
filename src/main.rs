@@ -49,18 +49,18 @@ impl Actor for SupervisorActor {
     ) -> Result<Self::State, ActorProcessingErr> {
         info!("Starting SupervisorActor with linked children");
 
-        // Convert the list of bootstrap tickets into a list of node_ids
-        let bootstrap_peer_node_ids = config
+        // Convert the list of bootstrap tickets into a list of node addresses  
+        let bootstrap_peer_node_addrs = config
             .bootstrap_nodes
             .unwrap_or(vec![])
             .into_iter()
-            .map(|ticket| ticket.node_addr().node_id)
+            .map(|ticket| ticket.node_addr().clone())
             .collect();
 
         let (_iroh_actor, _iroh_handle) = Actor::spawn_linked(
             Some("iroh".into()),
             actors::gossip2::iroh::IrohActor,
-            (bootstrap_peer_node_ids,),
+            (bootstrap_peer_node_addrs,),
             myself.clone().into(),
         )
         .await?;

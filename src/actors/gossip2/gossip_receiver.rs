@@ -4,7 +4,7 @@ use anyhow::Result;
 use futures::TryStreamExt;
 use iroh_gossip::api::GossipReceiver;
 use ractor::{Actor, ActorRef};
-use tokio::{select, sync::watch, task::JoinHandle};
+use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, trace, warn};
 
 use crate::actors::gossip2::GossipMessage;

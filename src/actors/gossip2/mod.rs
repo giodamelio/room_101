@@ -16,7 +16,7 @@ pub enum GossipMessage {
 }
 
 impl GossipMessage {
-    fn heartbeat_now() -> GossipMessage {
+    pub fn heartbeat_now() -> GossipMessage {
         GossipMessage::Heartbeat {
             sent_at: Utc::now(),
         }
