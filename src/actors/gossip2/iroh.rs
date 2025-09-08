@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use iroh::{Endpoint, NodeId, SecretKey, Watcher};
+use iroh::{Endpoint, NodeId, SecretKey, Watcher, node_info::NodeIdExt};
 use iroh_base::ticket::NodeTicket;
 use iroh_gossip::{
     api::{GossipReceiver, GossipSender},
@@ -40,7 +40,7 @@ impl Actor for IrohActor {
 
         let bootstrap_node_ids_prime = bootstrap_node_ids.clone();
         let handle = tokio::spawn(async move {
-            match run_iroh_network(topic_id.clone(), bootstrap_node_ids_prime).await {
+            match run_iroh_network(topic_id, bootstrap_node_ids_prime).await {
                 Err(err) => {
                     bail!(err.context("Iroh Actor Failed"));
                 }
@@ -118,13 +118,15 @@ async fn run_iroh_network(
         .await?;
 
     let ticket = NodeTicket::new(endpoint.node_addr().initialized().await);
-    debug!(node_id = ?endpoint.node_id(), ticket = ?ticket.to_string(), "Iroh Endpoint created");
+    debug!(node_id = ?ticket.node_addr().node_id, z32_node_id = ?ticket.node_addr().node_id.to_z32(), ticket = ?ticket.to_string(), "Iroh Endpoint created");
 
     let gossip = Gossip::builder().spawn(endpoint.clone());
 
     let _router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(iroh_gossip::ALPN, gossip.clone())
         .spawn();
+
+    debug!(?topic_id, ?bootstrap_node_ids, "Subscribing to Gossip");
 
     // If we don't have any bootstrap peers don't wait
     let topic = if bootstrap_node_ids.is_empty() {
