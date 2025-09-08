@@ -1,0 +1,109 @@
+/* Room 101 CSS variable overrides */
+:root {
+  --pico-primary: #3b82f6;
+  --pico-primary-hover: #2563eb;
+  --pico-primary-focus: rgba(59, 130, 246, 0.125);
+  --pico-primary-inverse: #fff;
+}
+
+/* Additional Room 101 specific styles */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.status-indicator.online {
+  color: #22c55e;
+}
+
+.status-indicator.secret {
+  color: #3b82f6;
+}
+
+.status-indicator.node {
+  color: #f59e0b;
+}
+
+.node-id {
+  font-family: var(--pico-font-family-mono, monospace);
+  font-size: 0.875rem;
+  color: var(--pico-muted-color);
+}
+
+.navbar-brand {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: var(--pico-contrast);
+  text-decoration: none;
+}
+
+/* Layout improvements */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+/* Copy button styling */
+button.outline.secondary {
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+  min-height: auto;
+}
+
+/* Article styling for cards */
+article header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+article footer {
+  text-align: right;
+}
+
+/* Code styling improvements */
+code {
+  font-size: 0.875rem;
+  word-break: break-all;
+}
+
+/* Utility classes for common layouts */
+.flex-center {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-center-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.large-icon {
+  font-size: 3em;
+  margin-bottom: 0.5rem;
+}
+
+.grid-list {
+  display: grid;
+  gap: 1rem;
+}
+
+/* Hash and code display */
+.hash-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hash-container code {
+  flex: 1;
+  word-break: break-all;
+}

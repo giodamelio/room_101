@@ -100,11 +100,11 @@ fn format_relative_time(datetime: &DateTime<Utc>) -> String {
     HumanTime::from(*datetime).to_string()
 }
 
-fn copy_button_component(text: &str, button_style: &str) -> Markup {
+fn copy_button_component(text: &str, _button_style: &str) -> Markup {
     html! {
         button
             onclick=(format!("navigator.clipboard.writeText('{}'); this.textContent = '✓'; setTimeout(() => this.textContent = '📋', 1000);", text))
-            style=(button_style)
+            class="outline secondary"
             title=(format!("Copy {}", if text.len() > 20 { "Hash" } else { "Node ID" }))
         {
             "📋"
@@ -112,20 +112,20 @@ fn copy_button_component(text: &str, button_style: &str) -> Markup {
     }
 }
 
-fn node_id_with_copy(node_id: &str, style_class: &str) -> Markup {
+fn node_id_with_copy(node_id: &str, _style_class: &str) -> Markup {
     html! {
-        div style="display: flex; align-items: center; gap: 6px;" {
-            code style=(style_class) { (node_id) }
-            (copy_button_component(node_id, "background: #f3f4f6; border: 1px solid #d1d5db; padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 0.7em; color: #6b7280;"))
+        div class="flex-center" {
+            code class="node-id" { (node_id) }
+            (copy_button_component(node_id, ""))
         }
     }
 }
 
-fn hash_with_copy(hash: &str, style_class: &str) -> Markup {
+fn hash_with_copy(hash: &str, _style_class: &str) -> Markup {
     html! {
-        div style="display: flex; align-items: center; gap: 8px;" {
-            code style=(format!("{}; flex: 1;", style_class)) { (hash) }
-            (copy_button_component(hash, "background: #f3f4f6; border: 1px solid #d1d5db; padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 0.7em; color: #6b7280; flex-shrink: 0;"))
+        div class="hash-container" {
+            code { (hash) }
+            (copy_button_component(hash, ""))
         }
     }
 }
@@ -289,13 +289,20 @@ async fn layout_with_default_navbar(content: Markup) -> Result<Markup> {
 fn layout(content: Markup) -> Markup {
     html! {
         (DOCTYPE)
-        meta name="htmx-config" content=r#"{"responseHandling":[{"code":".*", "swap": true}]}"#;
-        meta name="viewport" content="width=device-width, initial-scale=1.0";
-
-        script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" {};
-        script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js" {};
-        body style="font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5;" {
-            (content)
+        html {
+            head {
+                meta name="htmx-config" content=r#"{"responseHandling":[{"code":".*", "swap": true}]}"#;
+                meta name="viewport" content="width=device-width, initial-scale=1.0";
+                link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css";
+                style { (include_str!("../../styles.css")) }
+                script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js" {};
+                title { "Room 101" }
+            }
+            body {
+                main class="container" {
+                    (content)
+                }
+            }
         }
     }
 }
@@ -307,52 +314,53 @@ fn tmpl_peer_list(peers: &Vec<Peer>) -> Markup {
                 (empty_state("📡", "No peers connected", "Add a peer below to get started with the network."))
             }
         } @else {
-            div id="peer-list" style="display: flex; flex-direction: column; gap: 16px;" {
+            div id="peer-list" class="grid-list" {
                 @for peer in peers {
                     (list_item_card(html! {
-                        div style="display: flex; align-items: center; margin-bottom: 12px;" {
-                            span style="font-size: 1.5em; margin-right: 8px;" { "🖥️" }
-                            div style="flex: 1;" {
-                                a href=(format!("/peers/{}", peer.node_id))
-                                  style="text-decoration: none; color: inherit;"
-                                {
-                                    (node_id_with_copy(&peer.node_id, "font-weight: bold; font-size: 0.9em; color: #2563eb; font-family: monospace;"))
-                                }
+                        header {
+                            span { "🖥️" }
+                            a href=(format!("/peers/{}", peer.node_id)) {
+                                (node_id_with_copy(&peer.node_id, ""))
                             }
-                            div style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e;" {}
+                            small class="status-indicator online" { "●" }
                         }
 
                         @if let Some(_last_seen) = &peer.last_seen {
-                            div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #666;" {
-                                span style="margin-right: 6px;" { "🕒" }
-                                span { "Last seen " (peer.get_last_seen_utc().map_or("invalid timestamp".to_string(), |dt| format_relative_time(&dt))) }
+                            p {
+                                small {
+                                    span { "🕒" }
+                                    " Last seen " (peer.get_last_seen_utc().map_or("invalid timestamp".to_string(), |dt| format_relative_time(&dt)))
+                                }
                             }
                         } @else {
-                            div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #999;" {
-                                span style="margin-right: 6px;" { "❓" }
-                                span { "Never seen" }
+                            p {
+                                small class="status-indicator" {
+                                    span { "❓" }
+                                    " Never seen"
+                                }
                             }
                         }
 
                         @if let Some(hostname) = &peer.hostname {
-                            div style="display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; color: #666;" {
-                                span style="margin-right: 6px;" { "🏠" }
-                                span { (hostname) }
+                            p {
+                                small class="status-indicator node" {
+                                    span { "🏠" }
+                                    " " (hostname)
+                                }
                             }
                         }
 
                         @if let Some(age_key) = &peer.age_public_key {
-                            div style="display: flex; align-items: center; margin-bottom: 12px; font-size: 0.85em; color: #666;" {
-                                span style="margin-right: 6px;" { "🔐" }
-                                span style="font-family: monospace; word-break: break-all;" { (age_key) }
+                            p {
+                                small {
+                                    span { "🔐" }
+                                    code { (age_key) }
+                                }
                             }
                         }
 
-                        div style="text-align: right;" {
-                            a
-                                href=(format!("/secrets?peer={}", peer.node_id))
-                                style="background: #3b82f6; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 0.8em; display: inline-block;"
-                            {
+                        footer {
+                            a href=(format!("/secrets?peer={}", peer.node_id)) role="button" {
                                 "🔍 View Secrets"
                             }
                         }
@@ -368,49 +376,59 @@ async fn tmpl_index() -> Result<Markup> {
 
     Ok(layout_with_navbar(
         html! {
-            div style="text-align: center; padding: 60px 20px;" {
-                h1 style="font-size: 3em; color: #1f2937; margin: 0 0 16px 0;" { "Room 101" }
-                p style="font-size: 1.2em; color: #6b7280; margin: 0 0 40px 0;" {
+            header class="text-center-header" {
+                h1 { "Room 101" }
+                p {
                     "A peer-to-peer networking application for secure secret sharing"
                 }
+            }
 
-                div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; max-width: 900px; margin: 0 auto;" {
-                    // Peers card
-                    a href="/peers" style="text-decoration: none;" {
-                        div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; transition: box-shadow 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.1);" {
-                            div style="font-size: 3em; margin-bottom: 12px;" { "📡" }
-                            h2 style="color: #1f2937; margin: 0 0 8px 0;" { "Peers" }
-                            p style="color: #6b7280; margin: 0 0 12px 0; font-size: 0.9em;" {
-                                "Manage network connections and view peer status"
-                            }
-                            div style="background: #dbeafe; color: #1d4ed8; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; display: inline-block;" {
+            div class="grid" {
+                // Peers card
+                article {
+                    a href="/peers" {
+                        header class="text-center" {
+                            div class="large-icon" { "📡" }
+                            h2 { "Peers" }
+                        }
+                        p {
+                            "Manage network connections and view peer status"
+                        }
+                        footer {
+                            small class="status-indicator online" {
                                 (peer_count) " connected"
                             }
                         }
                     }
+                }
 
-                    // Secrets card
-                    a href="/secrets" style="text-decoration: none;" {
-                        div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; transition: box-shadow 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.1);" {
-                            div style="font-size: 3em; margin-bottom: 12px;" { "🔐" }
-                            h2 style="color: #1f2937; margin: 0 0 8px 0;" { "Secrets" }
-                            p style="color: #6b7280; margin: 0 0 12px 0; font-size: 0.9em;" {
-                                "Create, share, and manage encrypted secrets"
-                            }
-                            div style="background: #dcfce7; color: #166534; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; display: inline-block;" {
+                // Secrets card
+                article {
+                    a href="/secrets" {
+                        header class="text-center" {
+                            div class="large-icon" { "🔐" }
+                            h2 { "Secrets" }
+                        }
+                        p {
+                            "Create, share, and manage encrypted secrets"
+                        }
+                        footer {
+                            small class="status-indicator secret" {
                                 (secret_count) " secrets"
                             }
                         }
                     }
+                }
 
-                    // Events card
-                    a href="/events" style="text-decoration: none;" {
-                        div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; transition: box-shadow 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.1);" {
-                            div style="font-size: 3em; margin-bottom: 12px;" { "📋" }
-                            h2 style="color: #1f2937; margin: 0 0 8px 0;" { "Events" }
-                            p style="color: #6b7280; margin: 0; font-size: 0.9em;" {
-                                "View application logs and network activity"
-                            }
+                // Events card
+                article {
+                    a href="/events" {
+                        header class="text-center" {
+                            div class="large-icon" { "📋" }
+                            h2 { "Events" }
+                        }
+                        p {
+                            "View application logs and network activity"
                         }
                     }
                 }
@@ -432,30 +450,26 @@ async fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Result<Ma
             h1 { "Peers" }
 
             h2 { "Add New Peer" }
-            div id="error-message" style="color: red; margin-bottom: 10px;" {}
-            form method="POST" action="/peers" hx-post="/peers" hx-target="#peer-list" hx-swap="outerHTML" style="margin-bottom: 20px;" {
+            div id="error-message" {}
+            form method="POST" action="/peers" hx-post="/peers" hx-target="#peer-list" hx-swap="outerHTML" {
                 input type="text" name="ticket" placeholder="Node ID" required;
-                input type="submit" value="Add Peer";
+                input type="submit" value="Add Peer" role="button";
             }
 
-            h2 style="margin-bottom: 12px;" { "This Node" }
-            div style="background: #f0f9ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 16px; margin-bottom: 24px;" {
-                div style="display: flex; align-items: center; margin-bottom: 12px;" {
-                    span style="font-size: 1.5em; margin-right: 8px;" { "🏠" }
-                    div style="flex: 1;" {
-                        a href=(format!("/peers/{}", current_node_id.to_string()))
-                          style="text-decoration: none; color: inherit;"
-                        {
-                            (node_id_with_copy(&current_node_id.to_string(), "font-weight: bold; font-size: 0.9em; color: #2563eb; font-family: monospace;"))
-                        }
+            h2 { "This Node" }
+            article style="border-color: var(--pico-primary);" {
+                header {
+                    span { "🏠" }
+                    a href=(format!("/peers/{}", current_node_id.to_string())) {
+                        (node_id_with_copy(&current_node_id.to_string(), "font-weight: bold; font-size: 0.9em; color: #2563eb; font-family: monospace;"))
                     }
-                    span style="background: #3b82f6; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.8em;" {
-                        "YOU"
-                    }
+                    small role="button" class="contrast" { "YOU" }
                 }
-                div style="display: flex; align-items: center; font-size: 0.85em; color: #666;" {
-                    span style="margin-right: 6px;" { "🔗" }
-                    span { "Your local node - always connected" }
+                footer {
+                    small {
+                        span { "🔗" }
+                        " Your local node - always connected"
+                    }
                 }
             }
 
@@ -472,49 +486,49 @@ async fn tmpl_list_peers(peers: Vec<Peer>, current_node_id: NodeId) -> Result<Ma
 
 fn tmpl_event_list(events: &Vec<Event>) -> Markup {
     html! {
-        table style="width: 100%; border-collapse: collapse;" {
+        table {
             thead {
                 tr {
-                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Time" }
-                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Event Type" }
-                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Details" }
-                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "Message" }
-                    th style="border: 1px solid #ddd; padding: 8px; text-align: left;" { "JSON Data" }
+                    th { "Time" }
+                    th { "Event Type" }
+                    th { "Details" }
+                    th { "Message" }
+                    th { "JSON Data" }
                 }
             }
             tbody {
                 @for event in events {
                     tr {
-                        td style="border: 1px solid #ddd; padding: 8px;" {
+                        td {
                             (format_relative_time(&event.get_time_utc()))
                         }
-                        td style="border: 1px solid #ddd; padding: 8px;" {
+                        td {
                             @if let Ok(event_type) = event.get_event_type() {
                                 @match &event_type {
                                     EventType::PeerMessage { .. } => {
-                                        span style="background: #e3f2fd; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
+                                        small role="button" class="secondary" {
                                             "PeerMessage"
                                         }
                                     }
                                 }
                             }
                         }
-                        td style="border: 1px solid #ddd; padding: 8px;" {
+                        td {
                             @if let Ok(event_type) = event.get_event_type() {
                                 @match &event_type {
                                     EventType::PeerMessage { message_type } => {
-                                        span style="background: #f3e5f5; padding: 2px 6px; border-radius: 3px; font-size: 0.9em;" {
+                                        small role="button" class="contrast" {
                                             (message_type)
                                         }
                                     }
                                 }
                             }
                         }
-                        td style="border: 1px solid #ddd; padding: 8px;" {
+                        td {
                             (event.message)
                         }
-                        td style="border: 1px solid #ddd; padding: 8px; font-family: monospace; font-size: 0.8em;" {
-                            pre style="margin: 0; white-space: pre-wrap; word-break: break-all;" {
+                        td {
+                            pre {
                                 @if let Ok(data) = event.get_data() {
                                     (format_json_for_ui(&data))
                                 } @else {
@@ -538,7 +552,7 @@ async fn tmpl_list_events(events: Vec<Event>) -> Result<Markup> {
             p { "Last 100 events" }
 
             @if events.is_empty() {
-                p style="color: #666;" { "No events yet" }
+                (empty_state("📋", "No events yet", "Events will appear here as they occur"))
             } @else {
                 (tmpl_event_list(&events))
             }

@@ -93,22 +93,18 @@ impl Actor for SupervisorActor {
         //         "Failed to start SystemdActor: {e}"
         //     ))) as ActorProcessingErr
         // })?;
-        //
-        // debug!("Starting web server? {}", config.enable_webserver);
-        // if config.enable_webserver {
-        //     let (_webserver_actor, _webserver_handle) = Actor::spawn_linked(
-        //         Some("webserver".into()),
-        //         actors::webserver::WebServerActor,
-        //         (config.webserver_port, 10),
-        //         myself.clone().into(),
-        //     )
-        //     .await
-        //     .map_err(|e| {
-        //         Box::new(std::io::Error::other(format!(
-        //             "Failed to start WebServerActor: {e}"
-        //         ))) as ActorProcessingErr
-        //     })?;
-        // }
+
+        debug!("Starting web server? {}", config.enable_webserver);
+        if config.enable_webserver {
+            let (_webserver_actor, _webserver_handle) = Actor::spawn_linked(
+                Some("webserver".into()),
+                actors::webserver::WebServerActor,
+                (config.webserver_port, 10),
+                myself.clone().into(),
+            )
+            .await
+            .context("Failed to start Webserver Actor")?;
+        }
         //
         // info!("All actors started successfully");
         Ok(())
