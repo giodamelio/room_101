@@ -3,25 +3,9 @@ use anyhow::{Context, Result};
 use iroh::{NodeAddr, NodeId};
 use iroh_base::ticket::NodeTicket;
 use serde::{Deserialize, Serialize};
-use surrealdb::engine::local::{Db, Mem};
-use surrealdb::{Datetime, Surreal};
-use tokio::sync::OnceCell;
+use surrealdb::Datetime;
 
-static DATABASE: OnceCell<Surreal<Db>> = OnceCell::const_new();
-
-pub async fn db() -> Result<&'static Surreal<Db>> {
-    DATABASE
-        .get_or_try_init(|| async {
-            // TODO: allow saving to the FS with SurrealKV
-            let db = Surreal::new::<Mem>(()).await?;
-
-            // TODO: handle better selecting of the NS/DB
-            db.use_ns("prod").use_db("prod").await?;
-
-            Ok(db)
-        })
-        .await
-}
+use super::db;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Peer {

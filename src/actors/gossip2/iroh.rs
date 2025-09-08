@@ -1,13 +1,17 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use iroh::{Endpoint, SecretKey, Watcher, node_info::NodeIdExt, protocol::Router};
+use iroh::{Endpoint, Watcher, node_info::NodeIdExt, protocol::Router};
 use iroh_base::ticket::NodeTicket;
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use ractor::Actor;
 use tracing::debug;
 
-use crate::{actors::gossip2::gossip_sender::GossipSenderMessage, db2::PeerExt, utils::topic_id};
+use crate::{
+    actors::gossip2::gossip_sender::GossipSenderMessage,
+    db2::{self, PeerExt},
+    utils::topic_id,
+};
 
 pub struct IrohActor;
 
@@ -34,10 +38,10 @@ impl Actor for IrohActor {
 
         let topic_id = topic_id!("ROOM_101");
 
-        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let identity = db2::Identity::get_or_generate().await?;
 
         let endpoint = Endpoint::builder()
-            .secret_key(secret_key.clone())
+            .secret_key(identity.clone().secret_key)
             .discovery_n0()
             .bind()
             .await?;

@@ -27,7 +27,7 @@ pub fn navbar(
             }
             ul {
                 li {
-                    a href="/peers" 
+                    a href="/peers"
                       role=(if current_page == "peers" { "button" } else { "" })
                       class=(if current_page == "peers" { "contrast" } else { "" })
                     {
