@@ -9,7 +9,6 @@ use tracing_subscriber::EnvFilter;
 
 mod actors;
 mod custom_serde;
-mod db;
 mod db2;
 mod error;
 mod middleware;
@@ -46,7 +45,7 @@ impl Actor for SupervisorActor {
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        config: Self::Arguments,
+        _config: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
         info!("Starting SupervisorActor with linked children");
 
@@ -90,17 +89,17 @@ impl Actor for SupervisorActor {
         //     ))) as ActorProcessingErr
         // })?;
 
-        debug!("Starting web server? {}", config.enable_webserver);
-        if config.enable_webserver {
-            let (_webserver_actor, _webserver_handle) = Actor::spawn_linked(
-                Some("webserver".into()),
-                actors::webserver::WebServerActor,
-                (config.webserver_port, 10),
-                myself.clone().into(),
-            )
-            .await
-            .context("Failed to start Webserver Actor")?;
-        }
+        // debug!("Starting web server? {}", config.enable_webserver);
+        // if config.enable_webserver {
+        //     let (_webserver_actor, _webserver_handle) = Actor::spawn_linked(
+        //         Some("webserver".into()),
+        //         actors::webserver::WebServerActor,
+        //         (config.webserver_port, 10),
+        //         myself.clone().into(),
+        //     )
+        //     .await
+        //     .context("Failed to start Webserver Actor")?;
+        // }
         //
         // info!("All actors started successfully");
         Ok(())
@@ -199,9 +198,9 @@ async fn main() -> Result<()> {
     }
 
     // Initialize the global database
-    db::init_db(&args.db_path)
-        .await
-        .context("Failed to initialize database")?;
+    // db::init_db(&args.db_path)
+    //     .await
+    //     .context("Failed to initialize database")?;
 
     // Add any bootstrap tickets as Peers
     if !args.bootstrap.is_empty() {
@@ -253,11 +252,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Clean up database connection
+    // TODO: Clean up database connection
     debug!("Closing database connection...");
-    if let Err(e) = db::close_db().await {
-        error!("Failed to close database cleanly: {}", e);
-    }
+    // if let Err(e) = db::close_db().await {
+    //     error!("Failed to close database cleanly: {}", e);
+    // }
 
     info!("Application shutdown complete");
     Ok(())

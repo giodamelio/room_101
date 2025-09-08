@@ -41,7 +41,7 @@ pub mod age_recipient_serde {
             let serialized = serde_json::to_string(&recipient.to_string()).unwrap();
 
             // Verify it starts with the expected prefix in the serialized string
-            assert!(serialized.contains("AGE-SECRET-KEY-1"));
+            assert!(serialized.starts_with("\"age"));
         }
 
         #[test]
