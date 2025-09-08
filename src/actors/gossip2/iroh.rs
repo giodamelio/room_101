@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use iroh::{Endpoint, NodeId, SecretKey, Watcher, node_info::NodeIdExt, protocol::Router};
+use iroh::{Endpoint, SecretKey, Watcher, node_info::NodeIdExt, protocol::Router};
 use iroh_base::ticket::NodeTicket;
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use ractor::Actor;
 use tracing::debug;
 
-use crate::{actors::gossip2::gossip_sender::GossipSenderMessage, utils::topic_id};
+use crate::{actors::gossip2::gossip_sender::GossipSenderMessage, db2::PeerExt, utils::topic_id};
 
 pub struct IrohActor;
 
@@ -23,12 +23,12 @@ pub struct IrohState {
 impl Actor for IrohActor {
     type Msg = IrohMessage;
     type State = IrohState;
-    type Arguments = (Vec<iroh::NodeAddr>,);
+    type Arguments = (Vec<crate::db2::Peer>,);
 
     async fn pre_start(
         &self,
         myself: ractor::ActorRef<Self::Msg>,
-        (bootstrap_node_addrs,): Self::Arguments,
+        (bootstrap_peers,): Self::Arguments,
     ) -> Result<Self::State, ractor::ActorProcessingErr> {
         debug!("Starting Iroh Actor");
 
@@ -53,29 +53,24 @@ impl Actor for IrohActor {
 
         debug!(
             ?topic_id,
-            bootstrap_node_addrs_count = bootstrap_node_addrs.len(),
+            bootstrap_node_addrs_count = bootstrap_peers.len(),
             "Subscribing to Gossip"
         );
 
         // If we don't have any bootstrap peers don't wait
-        let topic = if bootstrap_node_addrs.is_empty() {
+        let topic = if bootstrap_peers.is_empty() {
             // Don't wait for any peers
-            gossip.subscribe_and_join(topic_id, vec![]).await?
+            gossip.subscribe(topic_id, vec![]).await?
         } else {
-            // Add bootstrap nodes to endpoint's address book first
-            let bootstrap_node_ids: Vec<NodeId> = bootstrap_node_addrs
-                .iter()
-                .map(|addr| addr.node_id)
-                .collect();
-
-            for node_addr in &bootstrap_node_addrs {
-                debug!(node_id = ?node_addr.node_id, "Adding bootstrap node to address book");
-                endpoint.add_node_addr(node_addr.clone())?;
+            // Add bootstrap peers to endpoint's address book first
+            for peer in &bootstrap_peers.clone() {
+                debug!(node_id = ?peer.node_id, "Adding bootstrap node to address book");
+                endpoint.add_node_addr(peer.node_addr().clone())?;
             }
 
             // Wait for at least one peer to connect
             gossip
-                .subscribe_and_join(topic_id, bootstrap_node_ids)
+                .subscribe_and_join(topic_id, bootstrap_peers.clone().to_node_ids())
                 .await?
         };
 
@@ -102,12 +97,10 @@ impl Actor for IrohActor {
         .context("Failed to start GossipReceiver Actor")?;
 
         // Manually add the bootstrap nodes if they exist
-        let bootstrap_node_ids: Vec<NodeId> = bootstrap_node_addrs
-            .iter()
-            .map(|addr| addr.node_id)
-            .collect();
-        if !bootstrap_node_ids.is_empty() {
-            gossip_sender_ref.send_message(GossipSenderMessage::JoinPeers(bootstrap_node_ids))?;
+        if !bootstrap_peers.is_empty() {
+            gossip_sender_ref.send_message(GossipSenderMessage::JoinPeers(
+                bootstrap_peers.to_node_ids(),
+            ))?;
         }
 
         // Start the heartbeat

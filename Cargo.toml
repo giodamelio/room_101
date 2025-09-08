@@ -40,3 +40,4 @@ sha2 = "0.10"
 hostname-validator = "1.1.1"
 ractor = "0.15.8"
 iroh-base = "0.91.2"
+surrealdb = { version = "2.3.7", features = ["kv-surrealkv", "kv-mem"] }

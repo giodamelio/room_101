@@ -8,7 +8,9 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod actors;
+mod custom_serde;
 mod db;
+mod db2;
 mod error;
 mod middleware;
 mod network;
@@ -24,7 +26,6 @@ pub struct SystemdSecretsConfig {
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
-    pub bootstrap_nodes: Option<Vec<NodeTicket>>,
     pub enable_webserver: bool,
     pub webserver_port: u16,
     pub systemd_config: SystemdSecretsConfig,
@@ -49,18 +50,13 @@ impl Actor for SupervisorActor {
     ) -> Result<Self::State, ActorProcessingErr> {
         info!("Starting SupervisorActor with linked children");
 
-        // Convert the list of bootstrap tickets into a list of node addresses
-        let bootstrap_peer_node_addrs = config
-            .bootstrap_nodes
-            .unwrap_or(vec![])
-            .into_iter()
-            .map(|ticket| ticket.node_addr().clone())
-            .collect();
+        // Get all the existing peers
+        let peers = db2::Peer::list().await?;
 
         let (_iroh_actor, _iroh_handle) = Actor::spawn_linked(
             Some("iroh".into()),
             actors::gossip2::iroh::IrohActor,
-            (bootstrap_peer_node_addrs,),
+            (peers,),
             myself.clone().into(),
         )
         .await?;
@@ -207,21 +203,16 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to initialize database")?;
 
-    // Parse bootstrap node strings into NodeIDs
-    let bootstrap_nodes = if args.bootstrap.is_empty() {
-        None
-    } else {
-        let mut nodes: Vec<NodeTicket> = Vec::new();
+    // Add any bootstrap tickets as Peers
+    if !args.bootstrap.is_empty() {
         for ticket_str in args.bootstrap {
             let ticket = NodeTicket::from_str(&ticket_str)?;
-            nodes.push(ticket);
+            db2::Peer::insert_from_ticket(ticket).await?;
         }
-        Some(nodes)
     };
 
     // Create application configuration
     let app_config = AppConfig {
-        bootstrap_nodes,
         enable_webserver: args.start_web,
         webserver_port: args.port,
         systemd_config: SystemdSecretsConfig {
