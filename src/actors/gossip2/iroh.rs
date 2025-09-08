@@ -1,17 +1,18 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use distributed_topic_tracker::{
-    AutoDiscoveryGossip, GossipReceiver, GossipSender, RecordPublisher, TopicId,
-};
 use iroh::{Endpoint, NodeId, SecretKey, Watcher};
 use iroh_base::ticket::NodeTicket;
-use iroh_gossip::net::Gossip;
+use iroh_gossip::{
+    api::{GossipReceiver, GossipSender},
+    net::Gossip,
+    proto::TopicId,
+};
 use ractor::Actor;
 use tokio::task::JoinHandle;
 use tracing::debug;
 
-use crate::actors::gossip2::{GossipMessage, gossip_sender::GossipSenderMessage};
+use crate::{actors::gossip2::gossip_sender::GossipSenderMessage, utils::topic_id};
 
 pub struct IrohActor;
 
@@ -35,7 +36,7 @@ impl Actor for IrohActor {
     ) -> Result<Self::State, ractor::ActorProcessingErr> {
         debug!("Starting Iroh Actor");
 
-        let topic_id = TopicId::new("ROOM_101".to_string());
+        let topic_id = topic_id!("ROOM_101");
 
         let bootstrap_node_ids_prime = bootstrap_node_ids.clone();
         let handle = tokio::spawn(async move {
@@ -125,26 +126,16 @@ async fn run_iroh_network(
         .accept(iroh_gossip::ALPN, gossip.clone())
         .spawn();
 
-    // TODO: this should come in via the args
-    let initial_secret = b"super-duper-secret".to_vec();
-    let record_publisher = RecordPublisher::new(
-        topic_id,
-        endpoint.node_id(),
-        secret_key.secret().clone(),
-        None,
-        initial_secret,
-    );
-
     // If we don't have any bootstrap peers don't wait
     let topic = if bootstrap_node_ids.is_empty() {
-        gossip
-            .subscribe_and_join_with_auto_discovery_no_wait(record_publisher)
-            .await?
+        // Don't wait for any peers
+        gossip.subscribe(topic_id, vec![]).await?
     } else {
+        // Wait for at least one peer to connect
         gossip
-            .subscribe_and_join_with_auto_discovery(record_publisher)
+            .subscribe_and_join(topic_id, bootstrap_node_ids)
             .await?
     };
 
-    topic.split().await
+    Ok(topic.split())
 }

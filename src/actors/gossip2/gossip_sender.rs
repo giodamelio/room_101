@@ -1,6 +1,6 @@
 use anyhow::Result;
-use distributed_topic_tracker::GossipSender;
 use iroh::NodeId;
+use iroh_gossip::api::GossipSender;
 use ractor::Actor;
 use tracing::{debug, trace};
 
@@ -50,14 +50,11 @@ impl Actor for GossipSenderActor {
             GossipSenderMessage::Broadcast(data) => {
                 trace!(?data, "Broadcasting data");
                 let data_bytes = serde_json::to_vec(&data)?;
-                state.sender.broadcast(data_bytes).await?;
+                state.sender.broadcast(data_bytes.into()).await?;
             }
             GossipSenderMessage::JoinPeers(bootstrap_peer_node_ids) => {
                 trace!(?bootstrap_peer_node_ids, "Manually adding peer(s)");
-                state
-                    .sender
-                    .join_peers(bootstrap_peer_node_ids, None)
-                    .await?;
+                state.sender.join_peers(bootstrap_peer_node_ids).await?;
             }
         }
 

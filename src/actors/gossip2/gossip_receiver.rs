@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use distributed_topic_tracker::GossipReceiver;
+use futures::TryStreamExt;
+use iroh_gossip::api::GossipReceiver;
 use ractor::{Actor, ActorRef};
 use tokio::{select, sync::watch, task::JoinHandle};
 use tracing::{debug, trace, warn};
@@ -21,7 +22,6 @@ pub enum GossipReceiverMessage {
 
 #[derive(Debug)]
 pub struct GossipReceiverState {
-    receiver: GossipReceiver,
     subscribers: Subscribers,
     subscribers_tx: watch::Sender<Subscribers>,
     handle: JoinHandle<Result<()>>,
@@ -35,18 +35,16 @@ impl Actor for GossipReceiverActor {
     async fn pre_start(
         &self,
         _myself: ractor::ActorRef<Self::Msg>,
-        (receiver,): Self::Arguments,
+        (mut receiver,): Self::Arguments,
     ) -> Result<Self::State, ractor::ActorProcessingErr> {
         debug!("Starting GossipSender Actor");
 
         let subscribers: Subscribers = HashSet::new();
         let (subscribers_tx, mut subscribers_rx) = watch::channel(subscribers.clone());
-        let new_receiver = receiver.clone();
         let handle =
-            tokio::spawn(async move { run_reciever(&new_receiver, &mut subscribers_rx).await });
+            tokio::spawn(async move { run_reciever(&mut receiver, &mut subscribers_rx).await });
 
         Ok(Self::State {
-            receiver,
             subscribers,
             subscribers_tx,
             handle,
@@ -90,35 +88,36 @@ impl Actor for GossipReceiverActor {
 }
 
 async fn run_reciever(
-    receiver: &GossipReceiver,
+    receiver: &mut GossipReceiver,
     subscribers_rx: &mut watch::Receiver<HashSet<Subscriber>>,
 ) -> Result<()> {
     trace!("Receiver task running");
 
-    loop {
-        select! {
-            Some(Ok(event)) = receiver.next() => {
-                trace!(?event, "Received event from Gossip");
+    while let Some(event) = receiver.try_next().await? {
+        trace!(?event, "Received event from Gossip");
 
-                match event {
-                    iroh_gossip::api::Event::Received(message) => {
-                        for subscriber in subscribers_rx.borrow().clone() {
-                            warn!(?subscriber, ?message, "I should be sending this to the subscriber");
-                            // subscriber.send_message(message)
-                        }
-                    },
-                    iroh_gossip::api::Event::NeighborUp(public_key) => {
-                        trace!(?public_key, "Neighbor Connected");
-                    }
-                    iroh_gossip::api::Event::NeighborDown(public_key) => {
-                        trace!(?public_key, "Neighbor Dropped");
-                    }
-                    iroh_gossip::api::Event::Lagged => {
-                        warn!("Iroh Gossip is lagging and we are missing messages!");
-                    }
+        match event {
+            iroh_gossip::api::Event::Received(message) => {
+                for subscriber in subscribers_rx.borrow().clone() {
+                    warn!(
+                        ?subscriber,
+                        ?message,
+                        "I should be sending this to the subscriber"
+                    );
+                    // subscriber.send_message(message)
                 }
-            },
-            else => {}
+            }
+            iroh_gossip::api::Event::NeighborUp(public_key) => {
+                trace!(?public_key, "Neighbor Connected");
+            }
+            iroh_gossip::api::Event::NeighborDown(public_key) => {
+                trace!(?public_key, "Neighbor Dropped");
+            }
+            iroh_gossip::api::Event::Lagged => {
+                warn!("Iroh Gossip is lagging and we are missing messages!");
+            }
         }
     }
+
+    Ok(())
 }
