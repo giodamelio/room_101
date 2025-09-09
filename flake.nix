@@ -113,6 +113,12 @@
 
             # Helper Scripts
             self'.packages.dns_check
+
+            # Native deps needed when using Surrealist
+            glib
+            pango
+            libsoup_3
+            webkitgtk_4_1
           ];
 
           shellHook = ''
