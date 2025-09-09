@@ -5,6 +5,8 @@ use rand::rngs;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::db2::AuditEvent;
+
 use super::db;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -26,6 +28,13 @@ impl Identity {
 
     pub async fn generate_and_create() -> Result<Identity> {
         let ident = Self::generate();
+
+        AuditEvent::log(
+            "IDENTITY_GENERATED".to_string(),
+            "Generated new identity".to_string(),
+            None,
+        )
+        .await?;
 
         db().await?
             .create(("identity", "self"))

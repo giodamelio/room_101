@@ -3,9 +3,11 @@ use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, Mem};
 use tokio::sync::OnceCell;
 
+pub mod audit_event;
 pub mod identity;
 pub mod peer;
 
+pub use audit_event::AuditEvent;
 pub use identity::Identity;
 pub use peer::{Peer, PeerExt};
 
