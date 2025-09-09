@@ -3,6 +3,7 @@ use anyhow::{Result, anyhow};
 use iroh::SecretKey;
 use rand::rngs;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tracing::debug;
 
 use crate::db2::AuditEvent;
@@ -32,7 +33,7 @@ impl Identity {
         AuditEvent::log(
             "IDENTITY_GENERATED".to_string(),
             "Generated new identity".to_string(),
-            None,
+            json!({"hello": "world"}),
         )
         .await?;
 
