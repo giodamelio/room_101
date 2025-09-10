@@ -56,40 +56,11 @@ impl Actor for SupervisorActor {
 
         let (_iroh_actor, _iroh_handle) = Actor::spawn_linked(
             Some("iroh".into()),
-            actors::gossip2::iroh::IrohActor,
+            actors::gossip::iroh::IrohActor,
             (peers,),
             myself.clone().into(),
         )
         .await?;
-
-        // // Start all child actors with spawn_linked() - if any die, supervisor dies
-        // let (_gossip_actor, _gossip_handle) = Actor::spawn_linked(
-        //     Some("gossip".into()),
-        //     actors::gossip::GossipActor,
-        //     actors::gossip::GossipConfig {
-        //         bootstrap_nodes: config.bootstrap_nodes,
-        //     },
-        //     myself.clone().into(),
-        // )
-        // .await
-        // .map_err(|e| {
-        //     Box::new(std::io::Error::other(format!(
-        //         "Failed to start GossipActor: {e}"
-        //     ))) as ActorProcessingErr
-        // })?;
-        //
-        // let (_systemd_actor, _systemd_handle) = Actor::spawn_linked(
-        //     Some("systemd".into()),
-        //     actors::systemd::SystemdActor,
-        //     config.systemd_config,
-        //     myself.clone().into(),
-        // )
-        // .await
-        // .map_err(|e| {
-        //     Box::new(std::io::Error::other(format!(
-        //         "Failed to start SystemdActor: {e}"
-        //     ))) as ActorProcessingErr
-        // })?;
 
         // debug!("Starting web server? {}", config.enable_webserver);
         // if config.enable_webserver {

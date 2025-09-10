@@ -8,7 +8,7 @@ use ractor::Actor;
 use tracing::debug;
 
 use crate::{
-    actors::gossip2::gossip_sender::GossipSenderMessage,
+    actors::gossip::gossip_sender::GossipSenderMessage,
     db::{Identity, Peer, PeerExt},
     utils::topic_id,
 };

@@ -1,31 +1,40 @@
-use chrono::Utc;
-use ractor::ActorRef;
 use std::time::Duration;
-use tokio::time::sleep;
-use tracing::{debug, error};
 
-use super::GossipMessage;
-use crate::db::{Identity, age_public_key_to_string};
-use crate::network::protocol::PeerMessage;
+use anyhow::Result;
+use ractor::{Actor, ActorRef, time::send_interval};
+use tracing::trace;
 
-pub async fn start_heartbeat_loop(identity: Identity, gossip_actor: ActorRef<GossipMessage>) {
-    debug!("Starting heartbeat loop");
+use crate::actors::gossip::{GossipMessage, gossip_sender::GossipSenderMessage};
 
-    loop {
-        sleep(Duration::from_secs(10)).await;
+pub struct HeartbeatActor;
 
-        let heartbeat_message = PeerMessage::Heartbeat {
-            node_id: identity.id(),
-            ticket: identity.ticket(),
-            time: Utc::now(),
-            age_public_key: age_public_key_to_string(&identity.age_key),
-        };
+impl Actor for HeartbeatActor {
+    type Msg = ();
+    type State = ActorRef<GossipSenderMessage>;
+    type Arguments = (Duration, ActorRef<GossipSenderMessage>);
 
-        if let Err(e) = gossip_actor.cast(GossipMessage::SendPeerMessage(heartbeat_message)) {
-            error!("Failed to send heartbeat message: {}", e);
-            break;
-        }
+    async fn pre_start(
+        &self,
+        myself: ractor::ActorRef<Self::Msg>,
+        (duration, gossip_sender_ref): Self::Arguments,
+    ) -> Result<Self::State, ractor::ActorProcessingErr> {
+        send_interval(duration, myself.get_cell(), || ());
+        Ok(gossip_sender_ref)
     }
 
-    debug!("Heartbeat loop stopped");
+    async fn handle(
+        &self,
+        _myself: ractor::ActorRef<Self::Msg>,
+        _message: Self::Msg,
+        gossip_sender_ref: &mut Self::State,
+    ) -> Result<(), ractor::ActorProcessingErr> {
+        // Send the heartbeat message
+        let heartbeat = GossipMessage::heartbeat_now();
+        trace!(?heartbeat, "Sending heartbeat");
+
+        let heartbeat_msg = GossipSenderMessage::Broadcast(heartbeat);
+        gossip_sender_ref.send_message(heartbeat_msg)?;
+
+        Ok(())
+    }
 }

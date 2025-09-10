@@ -1,3 +1,3 @@
-pub mod gossip2;
+pub mod gossip;
 // pub mod systemd;
 // pub mod webserver;

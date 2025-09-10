@@ -7,7 +7,7 @@ use ractor::{Actor, ActorRef};
 use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, trace, warn};
 
-use crate::actors::gossip2::GossipMessage;
+use crate::actors::gossip::GossipMessage;
 
 pub struct GossipReceiverActor;
 
