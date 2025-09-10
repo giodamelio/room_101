@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use clap::Parser;
 use iroh_base::ticket::NodeTicket;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use std::time::Duration;
@@ -8,6 +7,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 mod actors;
+mod args;
 mod custom_serde;
 mod db2;
 mod error;
@@ -114,34 +114,6 @@ pub fn get_systemd_secrets_config() -> anyhow::Result<&'static SystemdSecretsCon
         .ok_or_else(|| anyhow::anyhow!("SystemdSecretsConfig not initialized"))
 }
 
-#[derive(Parser, Debug)]
-#[command(name = "room_101")]
-#[command(about = "A peer-to-peer networking application")]
-struct Args {
-    /// Tickets of bootstrap nodes to connect to connect to (hex strings)
-    bootstrap: Vec<String>,
-
-    /// Start the web server
-    #[arg(long)]
-    start_web: bool,
-
-    /// Web server port (default: 3000)
-    #[arg(long, default_value = "3000")]
-    port: u16,
-
-    /// Path to SQLite database file
-    #[arg(long)]
-    db_path: String,
-
-    /// Directory to store systemd credentials (default: /var/lib/credstore)
-    #[arg(long, default_value = "/var/lib/credstore")]
-    systemd_secrets_path: String,
-
-    /// Use user-scope systemd credentials instead of system-scope (default: system-scope)
-    #[arg(long)]
-    systemd_user_scope: bool,
-}
-
 /// Initialize simple tracing-based logging to stdout
 fn setup_tracing() -> Result<()> {
     // Set up environment filter
@@ -168,7 +140,7 @@ async fn main() -> Result<()> {
     setup_tracing()?;
 
     // Parse command line arguments
-    let args = Args::parse();
+    let args = args::args().await;
 
     info!("Starting Room 101");
 
@@ -204,8 +176,8 @@ async fn main() -> Result<()> {
 
     // Add any bootstrap tickets as Peers
     if !args.bootstrap.is_empty() {
-        for ticket_str in args.bootstrap {
-            let ticket = NodeTicket::from_str(&ticket_str)?;
+        for ticket_str in &args.bootstrap {
+            let ticket = NodeTicket::from_str(ticket_str)?;
             db2::Peer::insert_from_ticket(ticket).await?;
         }
     };
