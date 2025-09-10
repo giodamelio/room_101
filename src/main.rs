@@ -13,11 +13,9 @@ mod args;
 mod custom_serde;
 mod db;
 mod error;
-mod middleware;
 mod network;
 mod systemd_secrets;
 mod utils;
-mod web_components;
 
 #[derive(Debug, Clone)]
 pub struct SystemdSecretsConfig {
@@ -27,8 +25,6 @@ pub struct SystemdSecretsConfig {
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
-    pub enable_webserver: bool,
-    pub webserver_port: u16,
     pub systemd_config: SystemdSecretsConfig,
 }
 
@@ -47,7 +43,7 @@ impl Actor for SupervisorActor {
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        _config: Self::Arguments,
+        config: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
         info!("Starting SupervisorActor with linked children");
 
@@ -62,19 +58,7 @@ impl Actor for SupervisorActor {
         )
         .await?;
 
-        // debug!("Starting web server? {}", config.enable_webserver);
-        // if config.enable_webserver {
-        //     let (_webserver_actor, _webserver_handle) = Actor::spawn_linked(
-        //         Some("webserver".into()),
-        //         actors::webserver::WebServerActor,
-        //         (config.webserver_port, 10),
-        //         myself.clone().into(),
-        //     )
-        //     .await
-        //     .context("Failed to start Webserver Actor")?;
-        // }
-        //
-        // info!("All actors started successfully");
+        info!("All actors started successfully");
         Ok(())
     }
 }
@@ -152,8 +136,6 @@ async fn main() -> Result<()> {
 
     // Create application configuration
     let app_config = AppConfig {
-        enable_webserver: args.start_web,
-        webserver_port: args.port,
         systemd_config: SystemdSecretsConfig {
             path: args.systemd_secrets_path.clone(),
             user_scope: args.systemd_user_scope,

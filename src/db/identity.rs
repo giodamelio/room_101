@@ -1,6 +1,6 @@
 use age::x25519::Identity as AgeIdentity;
 use anyhow::{Result, anyhow};
-use iroh::SecretKey;
+use iroh::{NodeId, SecretKey};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -18,6 +18,17 @@ pub struct Identity {
 }
 
 impl Identity {
+    pub fn id(&self) -> NodeId {
+        self.secret_key.public()
+    }
+
+    pub async fn get() -> Result<Identity> {
+        db().await?
+            .select(("identity", "self"))
+            .await?
+            .ok_or(anyhow!("Please have an identity crisis"))
+    }
+
     pub fn generate() -> Identity {
         let identity = Self {
             secret_key: SecretKey::generate(rngs::OsRng),
@@ -33,7 +44,7 @@ impl Identity {
         AuditEvent::log(
             "IDENTITY_GENERATED".to_string(),
             "Generated new identity".to_string(),
-            json!({"hello": "world"}),
+            json!({}),
         )
         .await?;
 

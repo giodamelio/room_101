@@ -20,7 +20,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Room 101 is a peer-to-peer networking application built with:
 - **Iroh**: P2P networking library for node discovery and gossip communication
 - **SurrealDB**: Local database for storing peers, events, and identity
-- **Poem**: Web framework for the optional HTTP interface
 - **Age**: Encryption library for secure data handling
 
 ### Core Components
@@ -36,11 +35,6 @@ Room 101 is a peer-to-peer networking application built with:
 - `Identity` model for cryptographic keys (Iroh SecretKey + Age private key)
 - `Peer` model for tracking network nodes and their status
 - `Event` model for logging application events with structured JSON data
-
-**webserver.rs**: Optional HTTP interface using Poem + Maud for:
-- Viewing connected peers and their status
-- Adding new bootstrap peers
-- Browsing application event history
 
 ### Key Design Patterns
 - All network communication uses cryptographically signed messages

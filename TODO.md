@@ -35,4 +35,3 @@
 - Currently uses Ractor actor system with supervisor pattern
 - Iroh for P2P networking and gossip protocol
 - Age encryption for secure data handling
-- Poem web framework for optional HTTP interface
