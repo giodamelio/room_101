@@ -16,7 +16,7 @@ pub struct Args {
     #[arg(long, default_value = "3000")]
     pub port: u16,
 
-    /// Path to SQLite database file
+    /// Path to database location
     #[arg(long)]
     pub db_path: String,
 

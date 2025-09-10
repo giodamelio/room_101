@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::debug;
 
-use crate::db2::AuditEvent;
+use crate::db::AuditEvent;
 
 use super::db;
 

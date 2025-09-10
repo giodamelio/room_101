@@ -33,7 +33,6 @@
 
 ## Architecture Notes
 - Currently uses Ractor actor system with supervisor pattern
-- SQLite database with SQLx for compile-time checked queries
 - Iroh for P2P networking and gossip protocol
 - Age encryption for secure data handling
 - Poem web framework for optional HTTP interface

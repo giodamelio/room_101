@@ -9,7 +9,7 @@ use tracing::debug;
 
 use crate::{
     actors::gossip2::gossip_sender::GossipSenderMessage,
-    db2::{self, PeerExt},
+    db::{Identity, Peer, PeerExt},
     utils::topic_id,
 };
 
@@ -27,7 +27,7 @@ pub struct IrohState {
 impl Actor for IrohActor {
     type Msg = IrohMessage;
     type State = IrohState;
-    type Arguments = (Vec<crate::db2::Peer>,);
+    type Arguments = (Vec<Peer>,);
 
     async fn pre_start(
         &self,
@@ -38,7 +38,7 @@ impl Actor for IrohActor {
 
         let topic_id = topic_id!("ROOM_101");
 
-        let identity = db2::Identity::get_or_generate().await?;
+        let identity = Identity::get_or_generate().await?;
 
         let endpoint = Endpoint::builder()
             .secret_key(identity.clone().secret_key)

@@ -9,12 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `cargo build` - Build the project
 - `cargo test` or `cargo nextest run` - Run tests (nextest is preferred)
 - `treefmt` - Format all code files
-- `pre-commit run -a` - Run all pre-commit hooks (formatting, linting, SQLx metadata)
-
-### Database Operations
-- `devenv tasks run db:reset` - Reset database completely
-- `devenv tasks run db:start-fresh` - Reset and setup database
-- `devenv tasks run db:sqlx-prepare` - Generate SQLx metadata (auto-runs on SQL changes)
+- `pre-commit run -a` - Run all pre-commit hooks (formatting, linting)
 
 ### Running the Application
 - `cargo run -- --start-web --db-path room_101.db [bootstrap-node-ids...]` - Run with web UI
@@ -24,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Room 101 is a peer-to-peer networking application built with:
 - **Iroh**: P2P networking library for node discovery and gossip communication
-- **SQLite**: Local database for storing peers, events, and identity
+- **SurrealDB**: Local database for storing peers, events, and identity
 - **Poem**: Web framework for the optional HTTP interface
 - **Age**: Encryption library for secure data handling
 
@@ -50,14 +45,13 @@ Room 101 is a peer-to-peer networking application built with:
 ### Key Design Patterns
 - All network communication uses cryptographically signed messages
 - Graceful shutdown coordination via broadcast channels
-- SQLx for compile-time checked database queries
 - Database migrations in `migrations/` directory
 
 ## Development Environment
 
 This project uses devenv.nix for reproducible development environments with:
 - Rust toolchain with mold linker for fast builds
-- Pre-commit hooks for code formatting (treefmt), linting (clippy), and SQLx metadata generation
+- Pre-commit hooks for code formatting (treefmt) and linting (clippy)
 - Task automation for database operations
 
 ## Project Planning and Task Management

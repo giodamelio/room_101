@@ -100,9 +100,7 @@
 
             # Development tools
             nil
-            sqlx-cli
             cargo-nextest
-            sqlite
             litecli
             crate2nix
             nix-output-monitor
@@ -129,9 +127,6 @@
             echo "  cargo build         - Build the project"
             echo "  cargo nextest run   - Run tests"
             echo "  treefmt             - Format all code files"
-            echo "  sqlx database reset - Reset database"
-            echo "  sqlx migrate run    - Run database migrations"
-            echo "  cargo sqlx prepare  - Generate SQLx metadata"
             echo
           '';
 

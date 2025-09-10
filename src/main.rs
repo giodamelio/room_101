@@ -6,10 +6,12 @@ use std::{str::FromStr, sync::OnceLock};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
+use crate::db::Peer;
+
 mod actors;
 mod args;
 mod custom_serde;
-mod db2;
+mod db;
 mod error;
 mod middleware;
 mod network;
@@ -50,7 +52,7 @@ impl Actor for SupervisorActor {
         info!("Starting SupervisorActor with linked children");
 
         // Get all the existing peers
-        let peers = db2::Peer::list().await?;
+        let peers = Peer::list().await?;
 
         let (_iroh_actor, _iroh_handle) = Actor::spawn_linked(
             Some("iroh".into()),
@@ -173,7 +175,7 @@ async fn main() -> Result<()> {
     if !args.bootstrap.is_empty() {
         for ticket_str in &args.bootstrap {
             let ticket = NodeTicket::from_str(ticket_str)?;
-            db2::Peer::insert_from_ticket(ticket).await?;
+            Peer::insert_from_ticket(ticket).await?;
         }
     };
 
