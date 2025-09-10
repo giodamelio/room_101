@@ -43,7 +43,7 @@ impl Peer {
     pub async fn insert_from_ticket(ticket: NodeTicket) -> Result<Option<Peer>> {
         let peer: Peer = ticket.into();
         db().await?
-            .insert(("peer", peer.node_id.to_string()))
+            .upsert(("peer", peer.node_id.to_string()))
             .content::<Peer>(peer)
             .await
             .context("Failed to insert peer")
