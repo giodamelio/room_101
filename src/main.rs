@@ -169,11 +169,6 @@ async fn main() -> Result<()> {
         warn!("To enable systemd secrets, install systemd-creds (usually part of systemd >= 248)");
     }
 
-    // Initialize the global database
-    // db::init_db(&args.db_path)
-    //     .await
-    //     .context("Failed to initialize database")?;
-
     // Add any bootstrap tickets as Peers
     if !args.bootstrap.is_empty() {
         for ticket_str in &args.bootstrap {
