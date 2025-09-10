@@ -1,12 +1,10 @@
-use std::collections::HashMap;
+use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use surrealdb::{
-    Datetime, Number, RecordId,
-    sql::{self, Value},
-};
+use surrealdb::{Datetime, Object, RecordId, Value};
+use tracing::debug;
 
 use super::db;
 
@@ -16,7 +14,7 @@ pub struct AuditEvent {
     pub id: Option<RecordId>,
     pub event_type: String,
     pub message: String,
-    pub data: HashMap<String, String>,
+    pub data: Object,
     pub timestamp: Datetime,
 }
 
@@ -26,7 +24,7 @@ impl AuditEvent {
             id: None,
             event_type,
             message,
-            data: value_to_hashmap(data)?,
+            data: value_to_object(data)?,
             timestamp: Utc::now().into(),
         };
 
@@ -43,18 +41,24 @@ impl AuditEvent {
     }
 }
 
-// TODO: watch this issue, then maybe we could store a Value in the DB instead of a HashMap of
-// string string pairs
+// This is incredibly stupid, but it works
+// TODO: watch this issue, then maybe we could store an Object
 // https://github.com/surrealdb/surrealdb/issues/5754
-fn value_to_hashmap(value: serde_json::Value) -> Result<HashMap<String, String>> {
+fn value_to_object(value: serde_json::Value) -> Result<Object> {
     let serde_map = value.as_object().ok_or(anyhow!("data is not an object"))?;
-    let mut output: HashMap<String, String> = HashMap::new();
+
+    debug!(?serde_map, "Serde map");
+
+    let mut output = Object::new();
+
     for (key, val) in serde_map.iter() {
+        debug!(?key, ?val, "Converting item");
+
         let mapped_val = match val {
-            serde_json::Value::Null => "Null".to_string(),
-            serde_json::Value::Bool(v) => v.to_string(),
-            serde_json::Value::Number(number) => number.to_string(),
-            serde_json::Value::String(v) => v.to_string(),
+            serde_json::Value::Null => todo!(),
+            serde_json::Value::Bool(v) => Value::from_str(&(*v).to_string())?,
+            serde_json::Value::Number(number) => Value::from_str(&(*number).to_string())?,
+            serde_json::Value::String(v) => Value::from_str(&(*v).to_string())?,
             serde_json::Value::Array(_values) => bail!("Nested arrays are not supported"),
             serde_json::Value::Object(_map) => bail!("Nested maps are not supported"),
         };
