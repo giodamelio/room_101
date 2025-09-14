@@ -24,13 +24,8 @@
       "Bash(treefmt:*)",
       "WebFetch(domain:systemd.io)",
       "Bash(rg:*)",
-      "Bash(ls:*)",
-      "Bash(RUST_LOG=room_101=debug,iroh_gossip=debug cargo run --*)"
+      "Bash(ls:*)"
+    ]
   },
-  "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": [
-    "language-server",
-    "memory",
-    "sequential-thinking"
-  ]
+  "enableAllProjectMcpServers": true
 }

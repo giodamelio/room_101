@@ -13,3 +13,6 @@ devenv.local.nix
 
 # pre-commit
 .pre-commit-config.yaml
+
+# Generate by our flake devshell
+.mcp.json

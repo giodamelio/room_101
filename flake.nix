@@ -24,6 +24,10 @@
       url = "github:hercules-ci/gitignore.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    mcp-servers-nix = {
+      url = "github:natsukium/mcp-servers-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs @ {flake-parts, ...}:
@@ -69,6 +73,18 @@
         room_101Package = pkgsWithFenix.callPackage ./Cargo.nix {
           inherit sourceFilter;
           pkgs = pkgsWithFenix;
+        };
+
+        # MCP servers config
+        mcpConfig = inputs.mcp-servers-nix.lib.mkConfig pkgs {
+          format = "json";
+          fileName = ".mcp.json";
+
+          programs = {
+            context7.enable = true;
+            sequential-thinking.enable = true;
+            git.enable = true;
+          };
         };
       in {
         # Main package
@@ -128,6 +144,9 @@
             echo "  cargo nextest run   - Run tests"
             echo "  treefmt             - Format all code files"
             echo
+
+            # Symlink in the .mcp.json
+            ln -sf ${mcpConfig} ./.mcp.json
           '';
 
           # Environment variables
