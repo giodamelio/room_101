@@ -75,6 +75,9 @@
           pkgs = pkgsWithFenix;
         };
 
+        # LSP MCP Server
+        mcpLspServer = pkgs.callPackage ./nix/mcp-language-server.nix {};
+
         # MCP servers config
         mcpConfig = inputs.mcp-servers-nix.lib.mkConfig pkgs {
           format = "json";
@@ -84,6 +87,13 @@
             context7.enable = true;
             sequential-thinking.enable = true;
             git.enable = true;
+          };
+
+          settings.servers = {
+            lsp = {
+              command = pkgs.lib.getExe mcpLspServer;
+              args = ["--workspace" "." "--lsp" "rust-analyzer"];
+            };
           };
         };
       in {

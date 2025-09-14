@@ -24,7 +24,12 @@
       "Bash(treefmt:*)",
       "WebFetch(domain:systemd.io)",
       "Bash(rg:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "mcp__lsp__diagnostics",
+      "mcp__lsp__definition",
+      "mcp__lsp__hover",
+      "mcp__lsp__references",
+      "mcp__git__git_status"
     ]
   },
   "enableAllProjectMcpServers": true
