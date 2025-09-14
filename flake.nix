@@ -28,6 +28,11 @@
       url = "github:natsukium/mcp-servers-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    bun2nix = {
+      url = "github:baileyluTCD/bun2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.treefmt-nix.follows = "treefmt-nix";
+    };
   };
 
   outputs = inputs @ {flake-parts, ...}:
@@ -78,6 +83,11 @@
         # LSP MCP Server
         mcpLspServer = pkgs.callPackage ./nix/mcp-language-server.nix {};
 
+        # Docs.rs MCP Server
+        mcpDocsrs = pkgs.callPackage ./nix/mcp-docsrs.nix {
+          inherit (inputs.bun2nix.lib.${system}) mkBunDerivation;
+        };
+
         # MCP servers config
         mcpConfig = inputs.mcp-servers-nix.lib.mkConfig pkgs {
           format = "json";
@@ -93,6 +103,10 @@
             lsp = {
               command = pkgs.lib.getExe mcpLspServer;
               args = ["--workspace" "." "--lsp" "rust-analyzer"];
+            };
+            docsrs = {
+              command = pkgs.lib.getExe mcpDocsrs;
+              args = [];
             };
           };
         };
@@ -131,6 +145,7 @@
             crate2nix
             nix-output-monitor
             dogdns
+            inputs'.bun2nix.packages.default
 
             # System dependencies
             pkg-config

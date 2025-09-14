@@ -29,7 +29,10 @@
       "mcp__lsp__definition",
       "mcp__lsp__hover",
       "mcp__lsp__references",
-      "mcp__git__git_status"
+      "mcp__git__git_status",
+      "mcp__docsrs__search_crates",
+      "mcp__docsrs__lookup_crate_docs",
+      "mcp__docsrs__lookup_item_docs"
     ]
   },
   "enableAllProjectMcpServers": true
