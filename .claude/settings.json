@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" && pre-commit run\n",
+            "command": "cd \"$DIRENV_DIR\" && pre-commit run\n",
             "type": "command"
           }
         ],
