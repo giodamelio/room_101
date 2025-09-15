@@ -6,7 +6,6 @@ use tokio::sync::OnceCell;
 #[command(about = "A peer-to-peer networking application")]
 pub struct Args {
     /// Path to database location
-    #[arg(long)]
     pub db_path: String,
 
     #[command(subcommand)]
