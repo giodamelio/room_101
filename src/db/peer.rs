@@ -1,5 +1,6 @@
 use age::x25519::Recipient as AgeRecipient;
 use anyhow::{Context, Result, anyhow};
+use chrono::{DateTime, Utc};
 use iroh::{NodeAddr, NodeId};
 use iroh_base::ticket::NodeTicket;
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ pub struct Peer {
     pub node_id: NodeId,
     pub ticket: NodeTicket,
     pub hostname: Option<String>,
-    pub last_seen: Option<Datetime>,
+    pub last_seen: Option<DateTime<Utc>>,
     #[serde(with = "crate::custom_serde::age_recipient_serde", default)]
     pub age_public_key: Option<AgeRecipient>,
 }
@@ -70,6 +71,23 @@ impl Peer {
             .ok_or(anyhow!("Could not count peers"))?;
 
         Ok(result.total)
+    }
+
+    pub async fn bump_last_seen(node_id: NodeId) -> Result<()> {
+        #[derive(serde::Serialize)]
+        struct UpdateLastSeen {
+            last_seen: DateTime<Utc>,
+        }
+
+        let _peer: Option<Peer> = db()
+            .await?
+            .update(("peer", node_id.to_string()))
+            .merge(UpdateLastSeen {
+                last_seen: Utc::now(),
+            })
+            .await?;
+
+        Ok(())
     }
 
     pub fn node_addr(&self) -> &NodeAddr {

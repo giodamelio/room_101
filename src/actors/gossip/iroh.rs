@@ -47,7 +47,12 @@ impl Actor for IrohActor {
             .await?;
 
         let ticket = NodeTicket::new(endpoint.node_addr().initialized().await);
-        debug!(node_id = ?ticket.node_addr().node_id, z32_node_id = ?ticket.node_addr().node_id.to_z32(), ticket = ?ticket.to_string(), "Iroh Endpoint created");
+        debug!(
+            node_id = ?ticket.node_addr().node_id,
+            z32_node_id = ?ticket.node_addr().node_id.to_z32(),
+            ticket = ?ticket.to_string(),
+            "Iroh Endpoint created"
+        );
 
         let gossip = Gossip::builder().spawn(endpoint.clone());
 

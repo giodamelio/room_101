@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono_humanize::HumanTime;
 
 use crate::args::{PeerCommands, PeersArgs};
 use crate::db::Peer;
@@ -23,12 +24,15 @@ pub async fn run(peers_args: &PeersArgs) -> Result<()> {
                     println!("    Hostname: {}", hostname);
                 }
                 if let Some(last_seen) = &peer.last_seen {
-                    println!("    Last seen: {}", last_seen);
+                    let human_time = HumanTime::from(*last_seen);
+                    println!("    Last seen: {} ({})", human_time, last_seen);
+                } else {
+                    println!("    Last seen: Never");
                 }
                 if peer.age_public_key.is_some() {
-                    println!("    Has Age public key: yes");
+                    println!("    Has Age public key: YES");
                 } else {
-                    println!("    Has Age public key: no");
+                    println!("    Has Age public key: NO");
                 }
                 println!("    Ticket: {}", peer.ticket);
                 println!();

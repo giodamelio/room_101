@@ -7,7 +7,7 @@ use ractor::{Actor, ActorRef};
 use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, trace, warn};
 
-use crate::actors::gossip::GossipMessage;
+use crate::{actors::gossip::GossipMessage, db::Peer};
 
 pub struct GossipReceiverActor;
 
@@ -98,6 +98,8 @@ async fn run_reciever(
 
         match event {
             iroh_gossip::api::Event::Received(message) => {
+                Peer::bump_last_seen(message.delivered_from).await?;
+
                 for subscriber in subscribers_rx.borrow().clone() {
                     warn!(
                         ?subscriber,
@@ -109,9 +111,13 @@ async fn run_reciever(
             }
             iroh_gossip::api::Event::NeighborUp(public_key) => {
                 trace!(?public_key, "Neighbor Connected");
+
+                Peer::bump_last_seen(public_key).await?;
             }
             iroh_gossip::api::Event::NeighborDown(public_key) => {
                 trace!(?public_key, "Neighbor Dropped");
+
+                Peer::bump_last_seen(public_key).await?;
             }
             iroh_gossip::api::Event::Lagged => {
                 warn!("Iroh Gossip is lagging and we are missing messages!");
