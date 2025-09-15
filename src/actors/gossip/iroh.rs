@@ -66,9 +66,7 @@ impl Actor for IrohActor {
             "Subscribing to Gossip"
         );
 
-        // If we don't have any bootstrap peers don't wait
         let topic = if bootstrap_peers.is_empty() {
-            // Don't wait for any peers
             gossip.subscribe(topic_id, vec![]).await?
         } else {
             // Add bootstrap peers to endpoint's address book first
@@ -77,9 +75,8 @@ impl Actor for IrohActor {
                 endpoint.add_node_addr(peer.node_addr().clone())?;
             }
 
-            // Wait for at least one peer to connect
             gossip
-                .subscribe_and_join(topic_id, bootstrap_peers.clone().to_node_ids())
+                .subscribe(topic_id, bootstrap_peers.clone().to_node_ids())
                 .await?
         };
 
