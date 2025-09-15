@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "cd \"$DIRENV_DIR\" && pre-commit run\n",
+            "command": "cd \"$(dirname $DIRENV_FILE)\" && pre-commit run\n",
             "type": "command"
           }
         ],
