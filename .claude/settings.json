@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "cd \"$(dirname $DIRENV_FILE)\" && pre-commit run\n",
+            "command": ".claude/hooks/pre-commit-wrapper.sh",
             "type": "command"
           }
         ],

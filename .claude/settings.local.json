@@ -35,7 +35,8 @@
       "mcp__docsrs__lookup_item_docs",
       "WebFetch(domain:surrealdb.com)",
       "WebFetch(domain:doc.rust-lang.org)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(pre-commit:*)"
     ]
   },
   "enableAllProjectMcpServers": true
