@@ -4,7 +4,7 @@ use iroh_gossip::api::GossipSender;
 use ractor::Actor;
 use tracing::{debug, trace};
 
-use crate::actors::gossip::{signing::SignedMessage, GossipMessage};
+use crate::actors::gossip::{GossipMessage, signing::SignedMessage};
 use crate::db::Identity;
 
 pub struct GossipSenderActor;

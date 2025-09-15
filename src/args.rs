@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use iroh_base::ticket::NodeTicket;
+use std::path::PathBuf;
 use tokio::sync::OnceCell;
 
 #[derive(Parser, Debug)]
@@ -35,6 +36,10 @@ pub struct ServerArgs {
     /// Use user-scope systemd credentials instead of system-scope (default: system-scope)
     #[arg(long)]
     pub systemd_user_scope: bool,
+
+    /// Path to write the node's ticket to when the gossip server starts
+    #[arg(long)]
+    pub ticket_file: Option<PathBuf>,
 }
 
 #[derive(Parser, Debug)]

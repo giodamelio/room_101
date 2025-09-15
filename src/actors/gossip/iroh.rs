@@ -5,7 +5,7 @@ use iroh::{Endpoint, Watcher, node_info::NodeIdExt, protocol::Router};
 use iroh_base::ticket::NodeTicket;
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use ractor::Actor;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{
     actors::gossip::gossip_sender::GossipSenderMessage,
@@ -53,6 +53,16 @@ impl Actor for IrohActor {
             ticket = ?ticket.to_string(),
             "Iroh Endpoint created"
         );
+
+        // Write ticket to file if specified
+        if let crate::args::Commands::Server(server_args) = &crate::args::args().await.command
+            && let Some(ref ticket_path) = server_args.ticket_file
+        {
+            match crate::utils::write_ticket_to_file(&ticket, ticket_path).await {
+                Ok(()) => debug!("Successfully wrote ticket to file '{ticket_path:?}'"),
+                Err(e) => warn!("Failed to write ticket to file '{ticket_path:?}': {e:?}"),
+            }
+        }
 
         let gossip = Gossip::builder().spawn(endpoint.clone());
 
