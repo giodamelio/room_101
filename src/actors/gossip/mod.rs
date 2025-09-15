@@ -5,6 +5,7 @@ pub mod gossip_receiver;
 pub mod gossip_sender;
 pub mod heartbeat;
 pub mod iroh;
+pub mod signing;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum GossipMessage {
@@ -22,3 +23,5 @@ impl GossipMessage {
         }
     }
 }
+
+impl signing::MessageSigner for GossipMessage {}

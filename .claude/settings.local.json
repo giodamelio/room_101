@@ -33,7 +33,9 @@
       "mcp__docsrs__search_crates",
       "mcp__docsrs__lookup_crate_docs",
       "mcp__docsrs__lookup_item_docs",
-      "WebFetch(domain:surrealdb.com)"
+      "WebFetch(domain:surrealdb.com)",
+      "WebFetch(domain:doc.rust-lang.org)",
+      "WebSearch"
     ]
   },
   "enableAllProjectMcpServers": true

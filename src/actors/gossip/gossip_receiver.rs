@@ -5,9 +5,12 @@ use futures::TryStreamExt;
 use iroh_gossip::api::GossipReceiver;
 use ractor::{Actor, ActorRef};
 use tokio::{sync::watch, task::JoinHandle};
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
-use crate::{actors::gossip::GossipMessage, db::Peer};
+use crate::{
+    actors::gossip::{GossipMessage, signing::SignedMessage},
+    db::Peer,
+};
 
 pub struct GossipReceiverActor;
 
@@ -98,15 +101,30 @@ async fn run_reciever(
 
         match event {
             iroh_gossip::api::Event::Received(message) => {
-                Peer::bump_last_seen(message.delivered_from).await?;
+                match SignedMessage::<GossipMessage>::verify_and_decode(&message.content) {
+                    Ok((sender_public_key, gossip_message)) => {
+                        trace!(
+                            ?sender_public_key,
+                            ?gossip_message,
+                            "Successfully verified and decoded gossip message"
+                        );
 
-                for subscriber in subscribers_rx.borrow().clone() {
-                    warn!(
-                        ?subscriber,
-                        ?message,
-                        "I should be sending this to the subscriber"
-                    );
-                    // subscriber.send_message(message)
+                        Peer::bump_last_seen(message.delivered_from).await?;
+
+                        for subscriber in subscribers_rx.borrow().clone() {
+                            trace!(?subscriber, "Sending verified message to subscriber");
+                            if let Err(err) = subscriber.send_message(gossip_message) {
+                                warn!(?err, "Failed to send message to subscriber");
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        error!(
+                            ?err,
+                            from = ?message.delivered_from,
+                            "Failed to verify signature or decode message - dropping"
+                        );
+                    }
                 }
             }
             iroh_gossip::api::Event::NeighborUp(public_key) => {

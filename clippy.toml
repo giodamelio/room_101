@@ -1,4 +1,3 @@
-# Clippy configuration for room_101
-
-# Note: unwrap_used and expect_used are configured as "deny" in Cargo.toml
-# Use #[allow(clippy::unwrap_used, clippy::expect_used)] in test modules to override
+# Allow unwraps and expects in test code
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
