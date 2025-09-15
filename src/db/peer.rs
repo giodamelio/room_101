@@ -1,5 +1,5 @@
 use age::x25519::Recipient as AgeRecipient;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use iroh::{NodeAddr, NodeId};
 use iroh_base::ticket::NodeTicket;
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,22 @@ impl Peer {
             .select("peer")
             .await
             .context("Failed to list peers")
+    }
+
+    pub async fn count() -> Result<usize> {
+        #[derive(serde::Deserialize)]
+        struct CountResult {
+            total: usize,
+        }
+
+        let result = db()
+            .await?
+            .query("SELECT count() AS total FROM peer GROUP ALL")
+            .await?
+            .take::<Option<CountResult>>(0)?
+            .ok_or(anyhow!("Could not count peers"))?;
+
+        Ok(result.total)
     }
 
     pub fn node_addr(&self) -> &NodeAddr {

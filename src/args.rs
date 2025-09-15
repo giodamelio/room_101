@@ -19,6 +19,8 @@ pub enum Commands {
     Server(ServerArgs),
     /// Manage peers
     Peers(PeersArgs),
+    /// Print general status
+    Status,
 }
 
 #[derive(Parser, Debug)]

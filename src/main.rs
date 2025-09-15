@@ -48,5 +48,6 @@ async fn main() -> Result<()> {
     match &args.command {
         args::Commands::Server(server_args) => commands::server::run(server_args).await,
         args::Commands::Peers(peers_args) => commands::peers::run(peers_args).await,
+        args::Commands::Status => commands::status::run().await,
     }
 }
