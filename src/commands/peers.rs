@@ -1,8 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use chrono_humanize::HumanTime;
 
 use crate::args::{PeerCommands, PeersArgs};
-use crate::db::Peer;
+use crate::db::{Identity, Peer};
 
 #[allow(clippy::print_stdout)] // CLI output is appropriate here
 pub async fn run(peers_args: &PeersArgs) -> Result<()> {
@@ -36,6 +36,32 @@ pub async fn run(peers_args: &PeersArgs) -> Result<()> {
                 }
                 println!("    Ticket: {}", peer.ticket);
                 println!();
+            }
+            Ok(())
+        }
+        PeerCommands::Add { ticket } => {
+            let identity = Identity::get().await.context("Failed to get identity")?;
+            let our_node_id = identity.id();
+            let ticket_node_id = ticket.node_addr().node_id;
+
+            ensure!(
+                our_node_id != ticket_node_id,
+                "Cannot add yourself as a peer"
+            );
+
+            let result = Peer::insert_from_ticket(ticket.clone())
+                .await
+                .context("Failed to add peer from ticket")?;
+
+            match result {
+                Some(peer) => {
+                    println!("Successfully added peer:");
+                    println!("  Node ID: {}", peer.node_id);
+                    println!("  Ticket: {}", peer.ticket);
+                }
+                None => {
+                    println!("Peer already exists or failed to add");
+                }
             }
             Ok(())
         }

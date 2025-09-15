@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use iroh_base::ticket::NodeTicket;
 use tokio::sync::OnceCell;
 
 #[derive(Parser, Debug)]
@@ -46,6 +47,11 @@ pub struct PeersArgs {
 pub enum PeerCommands {
     /// List all peers in the database
     List,
+    /// Add a peer from a ticket
+    Add {
+        /// The node ticket to add as a peer
+        ticket: NodeTicket,
+    },
 }
 
 static ARGS: OnceCell<Args> = OnceCell::const_new();
