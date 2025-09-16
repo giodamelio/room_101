@@ -168,7 +168,7 @@
             echo "  cargo check         - Check code for errors"
             echo "  cargo build         - Build the project"
             echo "  cargo nextest run   - Run tests"
-            echo "  treefmt             - Format all code files" 
+            echo "  treefmt             - Format all code files"
             echo
 
             # Symlink in the .mcp.json
