@@ -1,5 +1,4 @@
 use anyhow::Result;
-use tracing_subscriber::EnvFilter;
 
 mod actors;
 mod args;
@@ -9,32 +8,13 @@ mod db;
 mod error;
 mod network;
 mod systemd_secrets;
+mod tracing;
 mod utils;
-
-/// Initialize simple tracing-based logging to stdout
-fn setup_tracing() -> Result<()> {
-    // Set up environment filter
-    // Default to INFO level, but allow override with RUST_LOG environment variable
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("room_101=info,iroh=error,iroh_gossip=error"));
-
-    // Initialize the subscriber with structured logging to stdout
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_target(true)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false)
-        .compact()
-        .init();
-
-    Ok(())
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing first
-    setup_tracing()?;
+    tracing::setup_tracing()?;
 
     // Parse command line arguments
     let args = args::args().await;

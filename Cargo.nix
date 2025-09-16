@@ -12236,7 +12236,7 @@
         };
         resolvedDefaultFeatures = ["base32" "full" "httpdate" "serde"];
       };
-      "nu-ansi-term" = rec {
+      "nu-ansi-term 0.46.0" = rec {
         crateName = "nu-ansi-term";
         version = "0.46.0";
         edition = "2018";
@@ -12261,6 +12261,35 @@
               features,
             }: ("windows" == target."os" or null);
             features = ["consoleapi" "errhandlingapi" "fileapi" "handleapi" "processenv"];
+          }
+        ];
+        features = {
+          "derive_serde_style" = ["serde"];
+          "serde" = ["dep:serde"];
+        };
+      };
+      "nu-ansi-term 0.50.1" = rec {
+        crateName = "nu-ansi-term";
+        version = "0.50.1";
+        edition = "2021";
+        sha256 = "16a3isvbxx8pa3lk71h3cq2fsx2d17zzq42j4mhpxy81gl2qx8nl";
+        libName = "nu_ansi_term";
+        authors = [
+          "ogham@bsago.me"
+          "Ryan Scheel (Havvy) <ryan.havvy@gmail.com>"
+          "Josh Triplett <josh@joshtriplett.org>"
+          "The Nushell Project Developers"
+        ];
+        dependencies = [
+          {
+            name = "windows-sys";
+            packageId = "windows-sys 0.52.0";
+            rename = "windows";
+            target = {
+              target,
+              features,
+            }: (target."windows" or false);
+            features = ["Win32_Foundation" "Win32_System_Console" "Win32_Storage_FileSystem" "Win32_Security"];
           }
         ];
         features = {
@@ -16361,6 +16390,10 @@
           {
             name = "itertools";
             packageId = "itertools 0.13.0";
+          }
+          {
+            name = "nu-ansi-term";
+            packageId = "nu-ansi-term 0.50.1";
           }
           {
             name = "ractor";
@@ -21394,7 +21427,7 @@
           }
           {
             name = "nu-ansi-term";
-            packageId = "nu-ansi-term";
+            packageId = "nu-ansi-term 0.46.0";
             optional = true;
           }
           {
@@ -25491,7 +25524,7 @@
           "Win32_Web" = ["Win32"];
           "Win32_Web_InternetExplorer" = ["Win32_Web"];
         };
-        resolvedDefaultFeatures = ["Win32" "Win32_Foundation" "Win32_Networking" "Win32_Networking_WinSock" "Win32_System" "Win32_System_IO" "Win32_System_Threading" "Win32_System_WindowsProgramming" "default"];
+        resolvedDefaultFeatures = ["Win32" "Win32_Foundation" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Console" "Win32_System_IO" "Win32_System_Threading" "Win32_System_WindowsProgramming" "default"];
       };
       "windows-sys 0.59.0" = rec {
         crateName = "windows-sys";
