@@ -86,3 +86,14 @@ This project uses devenv.nix for reproducible development environments with:
 - **Professional Output**: Log messages must be professional, clean, and machine-readable
 - **Structured Data**: Include relevant context like node_ids, message types, timestamps in log messages
 - **Use Proper Logging**: Never use `println!` or `print!` - always use tracing macros (info!, debug!, trace!, error!, warn!)
+
+## Code Style Guidelines
+- **Minimal Comments**: Only add comments when the code is complex or non-obvious. Self-explanatory code should not have comments describing what it does.
+- **ASCII Only**: All code must be ASCII only. Never use emojis or Unicode characters in code, comments, or log messages unless explicitly requested.
+- **Clean Code**: Write code that is self-documenting through clear variable names, function names, and structure.
+- **Inline Format Arguments**: Use inline variable formatting in simple cases (e.g., `format!("Hello {name}")` instead of `format!("Hello {}", name)`). For complex expressions or when it hurts readability, use positional arguments.
+- **Comment Guidelines**: 
+  - Remove obvious comments like "// Write timestamp" before `write!(writer, timestamp)`
+  - Keep only comments that explain WHY, not WHAT
+  - Complex algorithms or business logic may warrant explanatory comments
+  - TODO comments are acceptable for marking future work
