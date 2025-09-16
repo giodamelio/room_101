@@ -128,12 +128,12 @@ async fn run_reciever(
                 }
             }
             iroh_gossip::api::Event::NeighborUp(public_key) => {
-                trace!(?public_key, "Neighbor Connected");
+                debug!(?public_key, "Neighbor Connected");
 
                 Peer::bump_last_seen(public_key).await?;
             }
             iroh_gossip::api::Event::NeighborDown(public_key) => {
-                trace!(?public_key, "Neighbor Dropped");
+                debug!(?public_key, "Neighbor Dropped");
 
                 Peer::bump_last_seen(public_key).await?;
             }

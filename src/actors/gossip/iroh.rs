@@ -5,7 +5,7 @@ use iroh::{Endpoint, Watcher, node_info::NodeIdExt, protocol::Router};
 use iroh_base::ticket::NodeTicket;
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use ractor::Actor;
-use tracing::{debug, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     actors::gossip::gossip_sender::GossipSenderMessage,
@@ -46,11 +46,16 @@ impl Actor for IrohActor {
             .bind()
             .await?;
 
-        let ticket = NodeTicket::new(endpoint.node_addr().initialized().await);
+        // Wait for the Relay and Addr before creating the ticket
+        let relay = endpoint.home_relay().initialized().await;
+        let addr = endpoint.node_addr().initialized().await;
+        let ticket = NodeTicket::new(addr.clone());
+        info!( ticket = ?ticket.to_string(), "Ticket");
         debug!(
             node_id = ?ticket.node_addr().node_id,
             z32_node_id = ?ticket.node_addr().node_id.to_z32(),
-            ticket = ?ticket.to_string(),
+            ?addr,
+            ?relay,
             "Iroh Endpoint created"
         );
 
@@ -77,7 +82,7 @@ impl Actor for IrohActor {
         );
 
         let topic = if bootstrap_peers.is_empty() {
-            gossip.subscribe(topic_id, vec![]).await?
+            gossip.subscribe_and_join(topic_id, vec![]).await?
         } else {
             // Add bootstrap peers to endpoint's address book first
             for peer in &bootstrap_peers.clone() {
@@ -86,9 +91,11 @@ impl Actor for IrohActor {
             }
 
             gossip
-                .subscribe(topic_id, bootstrap_peers.clone().to_node_ids())
+                .subscribe_and_join(topic_id, bootstrap_peers.clone().to_node_ids())
                 .await?
         };
+
+        trace!(?topic, "Subscribed to gossip");
 
         let (sender, receiver) = topic.split();
 
