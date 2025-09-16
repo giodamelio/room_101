@@ -92,7 +92,7 @@ This project uses devenv.nix for reproducible development environments with:
 - **ASCII Only**: All code must be ASCII only. Never use emojis or Unicode characters in code, comments, or log messages unless explicitly requested.
 - **Clean Code**: Write code that is self-documenting through clear variable names, function names, and structure.
 - **Inline Format Arguments**: Use inline variable formatting in simple cases (e.g., `format!("Hello {name}")` instead of `format!("Hello {}", name)`). For complex expressions or when it hurts readability, use positional arguments.
-- **Comment Guidelines**: 
+- **Comment Guidelines**:
   - Remove obvious comments like "// Write timestamp" before `write!(writer, timestamp)`
   - Keep only comments that explain WHY, not WHAT
   - Complex algorithms or business logic may warrant explanatory comments
