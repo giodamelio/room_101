@@ -9,7 +9,7 @@ echo "$output" >&2
 
 # Convert exit code 1 to 2, keep others as-is
 if [ $exit_code -eq 1 ]; then
-    exit 2
+  exit 2
 else
-    exit $exit_code
+  exit $exit_code
 fi
