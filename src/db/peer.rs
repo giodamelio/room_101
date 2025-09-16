@@ -50,6 +50,13 @@ impl Peer {
             .context("Failed to insert peer")
     }
 
+    pub async fn insert_from_node_id(node_id: NodeId) -> Result<Option<Peer>> {
+        // Create a new mostly empty ticket for the peer
+        // TODO: can we fill in this data later?
+        let ticket = NodeTicket::new(NodeAddr::new(node_id));
+        Self::insert_from_ticket(ticket).await
+    }
+
     pub async fn list() -> Result<Vec<Peer>> {
         db().await?
             .select("peer")

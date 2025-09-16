@@ -35,6 +35,7 @@ pub async fn run(peers_args: &PeersArgs) -> Result<()> {
                     println!("    Has Age public key: NO");
                 }
                 println!("    Ticket: {}", peer.ticket);
+                println!("    Node Addr: {:#?}", peer.ticket.node_addr());
                 println!();
             }
             Ok(())

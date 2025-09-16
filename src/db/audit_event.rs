@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use surrealdb::{Datetime, Object, RecordId, Value};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use super::db;
 
@@ -47,12 +47,10 @@ impl AuditEvent {
 fn value_to_object(value: serde_json::Value) -> Result<Object> {
     let serde_map = value.as_object().ok_or(anyhow!("data is not an object"))?;
 
-    debug!(?serde_map, "Serde map");
-
     let mut output = Object::new();
 
     for (key, val) in serde_map.iter() {
-        debug!(?key, ?val, "Converting item");
+        trace!(?key, ?val, "Converting item");
 
         let mapped_val = match val {
             serde_json::Value::Null => todo!(),

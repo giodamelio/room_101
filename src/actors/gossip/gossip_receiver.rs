@@ -130,6 +130,10 @@ async fn run_reciever(
             iroh_gossip::api::Event::NeighborUp(public_key) => {
                 debug!(?public_key, "Neighbor Connected");
 
+                // Add a shitty peer with a basically empty ticket
+                // TODO: can we get the relay/IP data from somewhere else?
+                Peer::insert_from_node_id(public_key).await?;
+
                 Peer::bump_last_seen(public_key).await?;
             }
             iroh_gossip::api::Event::NeighborDown(public_key) => {

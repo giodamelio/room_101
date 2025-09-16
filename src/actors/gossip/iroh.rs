@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use iroh::{Endpoint, Watcher, node_info::NodeIdExt, protocol::Router};
+use iroh::{
+    Endpoint, Watcher, discovery::static_provider::StaticProvider, node_info::NodeIdExt,
+    protocol::Router,
+};
 use iroh_base::ticket::NodeTicket;
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use ractor::Actor;
@@ -40,9 +43,12 @@ impl Actor for IrohActor {
 
         let identity = Identity::get_or_generate().await?;
 
+        let static_discovery = StaticProvider::new();
+
         let endpoint = Endpoint::builder()
             .secret_key(identity.clone().secret_key)
             .discovery_n0()
+            .add_discovery(static_discovery.clone())
             .bind()
             .await?;
 
@@ -82,12 +88,12 @@ impl Actor for IrohActor {
         );
 
         let topic = if bootstrap_peers.is_empty() {
-            gossip.subscribe_and_join(topic_id, vec![]).await?
+            gossip.subscribe(topic_id, vec![]).await?
         } else {
             // Add bootstrap peers to endpoint's address book first
             for peer in &bootstrap_peers.clone() {
                 debug!(node_id = ?peer.node_id, "Adding bootstrap node to address book");
-                endpoint.add_node_addr(peer.node_addr().clone())?;
+                static_discovery.add_node_info(peer.node_addr().clone());
             }
 
             gossip
