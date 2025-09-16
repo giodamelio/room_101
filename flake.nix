@@ -80,6 +80,9 @@
           pkgs = pkgsWithFenix;
         };
 
+        iroh-doctor = pkgs.callPackage ./nix/iroh-doctor.nix {};
+        iroh-relay = pkgs.callPackage ./nix/iroh-relay.nix {};
+
         # LSP MCP Server
         mcpLspServer = pkgs.callPackage ./nix/mcp-language-server.nix {};
 
@@ -125,7 +128,6 @@
               dog "_iroh.''${Z32_ID}.dns.iroh.link" TXT
             '';
           };
-
         };
 
         # Development shell
@@ -147,6 +149,8 @@
             nix-output-monitor
             dogdns
             inputs'.bun2nix.packages.default
+            iroh-doctor
+            iroh-relay
 
             # System dependencies
             pkg-config
