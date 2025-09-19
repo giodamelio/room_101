@@ -7,13 +7,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Build and Check
 - `cargo check` - Check code for errors without building (fast)
 - `cargo build` - Build the project
-- `cargo test` or `cargo nextest run` - Run tests (nextest is preferred)
+- `cargo nextest run` - Run tests (ALWAYS use nextest, not `cargo test`)
 - `treefmt` - Format all code files
 - `pre-commit run -a` - Run all pre-commit hooks (formatting, linting)
 
 ### Running the Application
-- `cargo run -- --start-web --db-path room_101.db [bootstrap-node-ids...]` - Run with web UI
-- `cargo run -- --db-path room_101.db [bootstrap-node-ids...]` - Run without web UI
+- `cargo run -- room_101.db server [bootstrap-node-ids...]` - Run the P2P networking server
+- `cargo run -- room_101.db init` - Initialize identity and generate ticket
+- `cargo run -- room_101.db peers` - Manage peers
+- `cargo run -- room_101.db status` - Print general status
 
 ## Architecture Overview
 
@@ -21,25 +23,33 @@ Room 101 is a peer-to-peer networking application built with:
 - **Iroh**: P2P networking library for node discovery and gossip communication
 - **SurrealDB**: Local database for storing peers, events, and identity
 - **Age**: Encryption library for secure data handling
+- **Ractor**: Actor framework for concurrent task management
 
 ### Core Components
 
-**main.rs**: Application entry point that coordinates the network manager and optional web server tasks with graceful shutdown handling.
+**main.rs**: Application entry point with command routing (server, init, peers, status) and tracing setup.
 
-**network.rs**: Core P2P networking layer that:
-- Manages iroh endpoint and gossip protocol
-- Handles peer discovery and communication via signed messages
-- Coordinates multiple async tasks: gossip setup, message listener/sender, heartbeat
+**actors/supervisor.rs**: Main supervisor actor that manages child actors using the Ractor framework:
+- Spawns and links IrohActor for P2P networking
+- Spawns TestListenerActor for gossip message testing
+- Coordinates graceful shutdown of all child actors
 
-**db.rs**: Database abstraction layer providing:
+**actors/gossip/**: P2P networking actors handling:
+- `iroh.rs`: Core IrohActor managing iroh endpoint and gossip protocol
+- `gossip_receiver.rs` & `gossip_sender.rs`: Message handling actors
+- `heartbeat.rs`: Periodic heartbeat functionality
+- `signing.rs`: Cryptographic message signing
+
+**db/**: Database abstraction layer providing:
 - `Identity` model for cryptographic keys (Iroh SecretKey + Age private key)
 - `Peer` model for tracking network nodes and their status
-- `Event` model for logging application events with structured JSON data
+- `AuditEvent` model for logging application events with structured JSON data
 
 ### Key Design Patterns
 - All network communication uses cryptographically signed messages
-- Graceful shutdown coordination via broadcast channels
-- Database migrations in `migrations/` directory
+- Actor-based architecture using Ractor framework for concurrent task management
+- Graceful shutdown coordination via linked actors and supervisor pattern
+- Database operations using SurrealDB with structured models
 
 ## Development Environment
 
@@ -55,12 +65,12 @@ This project uses devenv.nix for reproducible development environments with:
   - Completing tasks or milestones
   - Discovering issues or blockers
   - Planning multi-phase implementations
-- **Major Refactor in Progress**: The application is currently being refactored to use a task-based broadcast architecture with tokio::sync::broadcast channels - see TODO.md for complete details
+- **Current Architecture**: The application uses a Ractor-based actor system with SupervisorActor managing child actors for networking and message processing
 - **Task Organization**: TODO.md uses nested hierarchical structure with detailed implementation notes, code examples, and migration strategies
 - This application focuses on cryptographic secrets management in a P2P network
 
 ## Testing
-- Preferred test runner: `cargo nextest run` (faster than `cargo test`)
+- ALWAYS use cargo-nextest: `cargo nextest run`
 - Tests automatically run via `enterTest` in devenv configuration
 
 ## Rust Development Workflow
