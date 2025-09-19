@@ -4,12 +4,13 @@ use anyhow::{Result, anyhow};
 use futures::TryStreamExt;
 use iroh_gossip::api::GossipReceiver;
 use ractor::{Actor, ActorCell};
+use serde_json::json;
 use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, error, trace, warn};
 
 use crate::{
     actors::gossip::{GossipMessage, signing::SignedMessage},
-    db::Peer,
+    db::{AuditEvent, Peer},
 };
 
 pub struct GossipReceiverActor;
@@ -139,14 +140,39 @@ async fn run_reciever(
                 Peer::insert_from_node_id(public_key).await?;
 
                 Peer::bump_last_seen(public_key).await?;
+
+                AuditEvent::log(
+                    "GOSSIP_NEIGHBOR_UP".to_string(),
+                    "Neighbor connected to gossip network".to_string(),
+                    json!({
+                        "node_id": public_key.to_string()
+                    }),
+                )
+                .await?;
             }
             iroh_gossip::api::Event::NeighborDown(public_key) => {
                 debug!(?public_key, "Neighbor Dropped");
 
                 Peer::bump_last_seen(public_key).await?;
+
+                AuditEvent::log(
+                    "GOSSIP_NEIGHBOR_DOWN".to_string(),
+                    "Neighbor disconnected from gossip network".to_string(),
+                    json!({
+                        "node_id": public_key.to_string()
+                    }),
+                )
+                .await?;
             }
             iroh_gossip::api::Event::Lagged => {
                 warn!("Iroh Gossip is lagging and we are missing messages!");
+
+                AuditEvent::log(
+                    "GOSSIP_LAGGED".to_string(),
+                    "Gossip network is lagging and messages may be missing".to_string(),
+                    json!({}),
+                )
+                .await?;
             }
         }
     }
