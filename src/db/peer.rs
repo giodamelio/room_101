@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use iroh::{NodeAddr, NodeId};
 use iroh_base::ticket::NodeTicket;
 use serde::{Deserialize, Serialize};
-use surrealdb::Datetime;
 
 use super::db;
 
@@ -99,5 +98,53 @@ impl Peer {
 
     pub fn node_addr(&self) -> &NodeAddr {
         self.ticket.node_addr()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use iroh::NodeAddr;
+    use iroh_base::ticket::NodeTicket;
+
+    #[tokio::test]
+    async fn test_insert_from_ticket_no_duplicates() {
+        // Create a test ticket
+        let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
+        let node_id = secret_key.public();
+        let node_addr1 = NodeAddr::new(node_id);
+        let ticket1 = NodeTicket::new(node_addr1);
+
+        // Create a second ticket with same NodeId but potentially different endpoint info
+        let node_addr2 =
+            NodeAddr::new(node_id).with_direct_addresses(["127.0.0.1:8080".parse().unwrap()]);
+        let ticket2 = NodeTicket::new(node_addr2);
+
+        // Insert the first ticket
+        let result1 = Peer::insert_from_ticket(ticket1.clone()).await.unwrap();
+        assert!(result1.is_some());
+        let peer1 = result1.unwrap();
+
+        // Insert the second ticket with same NodeId but different endpoint info
+        let result2 = Peer::insert_from_ticket(ticket2.clone()).await.unwrap();
+        assert!(result2.is_some());
+        let peer2 = result2.unwrap();
+
+        // Verify they have the same node_id
+        assert_eq!(peer1.node_id, peer2.node_id);
+        assert_eq!(peer1.node_id, node_id);
+
+        // Verify the ticket was updated to the second ticket
+        assert_eq!(peer2.ticket.node_addr(), ticket2.node_addr());
+        assert_ne!(peer1.ticket.node_addr(), peer2.ticket.node_addr());
+
+        // Verify we only have one peer in the database
+        let peers = Peer::list().await.unwrap();
+        let matching_peers: Vec<_> = peers.into_iter().filter(|p| p.node_id == node_id).collect();
+        assert_eq!(matching_peers.len(), 1);
+
+        // Verify the final peer has the updated ticket (ticket2)
+        assert_eq!(matching_peers[0].ticket.node_addr(), ticket2.node_addr());
     }
 }
