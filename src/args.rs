@@ -22,6 +22,8 @@ pub enum Commands {
     Peers(PeersArgs),
     /// Print general status
     Status,
+    /// Init Iroh Identity, Age Private Key. Generate Iroh Ticket
+    Init,
 }
 
 #[derive(Parser, Debug)]
