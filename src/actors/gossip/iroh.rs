@@ -136,7 +136,7 @@ impl Actor for IrohActor {
         Actor::spawn_linked(
             Some("heartbeat".into()),
             super::heartbeat::HeartbeatActor,
-            (Duration::from_secs(10), gossip_sender_ref.clone()),
+            (Duration::from_secs(1), gossip_sender_ref.clone()),
             myself.clone().into(),
         )
         .await

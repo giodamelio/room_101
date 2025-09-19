@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use futures::TryStreamExt;
 use iroh_gossip::api::GossipReceiver;
-use ractor::{Actor, ActorRef};
+use ractor::{Actor, ActorCell};
 use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, error, trace, warn};
 
@@ -14,13 +14,12 @@ use crate::{
 
 pub struct GossipReceiverActor;
 
-type Subscriber = ActorRef<GossipMessage>;
-type Subscribers = HashSet<Subscriber>;
+type Subscribers = HashMap<String, ActorCell>;
 
 #[derive(Debug)]
 pub enum GossipReceiverMessage {
-    Subscribe(Subscriber),
-    Unsubscribe(Subscriber),
+    Subscribe(String),
+    Unsubscribe(String),
 }
 
 #[derive(Debug)]
@@ -42,7 +41,7 @@ impl Actor for GossipReceiverActor {
     ) -> Result<Self::State, ractor::ActorProcessingErr> {
         debug!("Starting GossipSender Actor");
 
-        let subscribers: Subscribers = HashSet::new();
+        let subscribers: Subscribers = HashMap::new();
         let (subscribers_tx, mut subscribers_rx) = watch::channel(subscribers.clone());
         let handle =
             tokio::spawn(async move { run_reciever(&mut receiver, &mut subscribers_rx).await });
@@ -61,16 +60,19 @@ impl Actor for GossipReceiverActor {
         state: &mut Self::State,
     ) -> Result<(), ractor::ActorProcessingErr> {
         match message {
-            GossipReceiverMessage::Subscribe(actor_ref) => {
-                trace!(?actor_ref, "Subscribing to GossipReceiver");
+            GossipReceiverMessage::Subscribe(name) => {
+                trace!(?name, "Subscribing to GossipReceiver");
 
-                state.subscribers.insert(actor_ref);
+                let actor = ractor::registry::where_is(name.clone())
+                    .ok_or_else(|| anyhow!("Could not find actor"))?;
+
+                state.subscribers.insert(name, actor);
                 state.subscribers_tx.send(state.subscribers.clone())?;
             }
-            GossipReceiverMessage::Unsubscribe(actor_ref) => {
-                trace!(?actor_ref, "Unsubscribing to GossipReceiver");
+            GossipReceiverMessage::Unsubscribe(name) => {
+                trace!(?name, "Unsubscribing to GossipReceiver");
 
-                state.subscribers.remove(&actor_ref);
+                state.subscribers.remove(&name);
                 state.subscribers_tx.send(state.subscribers.clone())?;
             }
         }
@@ -92,7 +94,7 @@ impl Actor for GossipReceiverActor {
 
 async fn run_reciever(
     receiver: &mut GossipReceiver,
-    subscribers_rx: &mut watch::Receiver<HashSet<Subscriber>>,
+    subscribers_rx: &mut watch::Receiver<Subscribers>,
 ) -> Result<()> {
     trace!("Receiver task running");
 
@@ -111,9 +113,11 @@ async fn run_reciever(
 
                         Peer::bump_last_seen(message.delivered_from).await?;
 
-                        for subscriber in subscribers_rx.borrow().clone() {
+                        for (_name, subscriber) in subscribers_rx.borrow().clone() {
                             trace!(?subscriber, "Sending verified message to subscriber");
-                            if let Err(err) = subscriber.send_message(gossip_message) {
+                            if let Err(err) =
+                                subscriber.send_message((sender_public_key, gossip_message))
+                            {
                                 warn!(?err, "Failed to send message to subscriber");
                             }
                         }
