@@ -29,6 +29,6 @@ async fn main() -> Result<()> {
         args::Commands::Server(server_args) => commands::server::run(server_args).await,
         args::Commands::Peers(peers_args) => commands::peers::run(peers_args).await,
         args::Commands::Status => commands::status::run().await,
-        args::Commands::Init => commands::init::run().await,
+        args::Commands::Init(_) => commands::init::run().await,
     }
 }

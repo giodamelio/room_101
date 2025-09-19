@@ -67,7 +67,7 @@ impl Actor for IrohActor {
 
         // Write ticket to file if specified
         if let crate::args::Commands::Server(server_args) = &crate::args::args().await.command
-            && let Some(ref ticket_path) = server_args.ticket_file
+            && let Some(ref ticket_path) = server_args.init.ticket_file
         {
             match crate::utils::write_ticket_to_file(&ticket, ticket_path).await {
                 Ok(()) => debug!("Successfully wrote ticket to file '{ticket_path:?}'"),

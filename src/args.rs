@@ -23,7 +23,14 @@ pub enum Commands {
     /// Print general status
     Status,
     /// Init Iroh Identity, Age Private Key. Generate Iroh Ticket
-    Init,
+    Init(InitArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct InitArgs {
+    /// Path to write the node's ticket to
+    #[arg(long)]
+    pub ticket_file: Option<PathBuf>,
 }
 
 #[derive(Parser, Debug)]
@@ -39,9 +46,8 @@ pub struct ServerArgs {
     #[arg(long)]
     pub systemd_user_scope: bool,
 
-    /// Path to write the node's ticket to when the gossip server starts
-    #[arg(long)]
-    pub ticket_file: Option<PathBuf>,
+    #[command(flatten)]
+    pub init: InitArgs,
 }
 
 #[derive(Parser, Debug)]

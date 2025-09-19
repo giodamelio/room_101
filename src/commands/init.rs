@@ -1,6 +1,7 @@
 use anyhow::Result;
-use iroh::{Endpoint, Watcher, node_info::NodeIdExt};
+use iroh::{Endpoint, Watcher};
 use iroh_base::ticket::NodeTicket;
+use tracing::{error, trace};
 
 use crate::db::Identity;
 
@@ -31,6 +32,16 @@ pub async fn run() -> Result<()> {
     let addr = endpoint.node_addr().initialized().await;
     let ticket = NodeTicket::new(addr.clone());
     println!("Iroh Ticket: {ticket}");
+
+    // Write ticket to file if specified
+    if let crate::args::Commands::Init(init_args) = &crate::args::args().await.command
+        && let Some(ref ticket_path) = init_args.ticket_file
+    {
+        match crate::utils::write_ticket_to_file(&ticket, ticket_path).await {
+            Ok(()) => trace!("Successfully wrote ticket to file '{ticket_path:?}'"),
+            Err(e) => error!("Failed to write ticket to file '{ticket_path:?}': {e:?}"),
+        }
+    }
 
     Ok(())
 }
