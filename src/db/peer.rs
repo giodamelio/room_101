@@ -40,6 +40,24 @@ impl PeerExt<Peer> for Vec<Peer> {
 }
 
 impl Peer {
+    #[cfg(test)]
+    pub fn from_string(node_id_str: &str, age_public_key_str: &str) -> Result<Peer> {
+        let node_id = node_id_str.parse::<NodeId>()
+            .context("Failed to parse NodeId from string")?;
+        let age_public_key = age_public_key_str.parse::<AgeRecipient>()
+            .map_err(|e| anyhow!("Failed to parse Age Recipient from string: {e}"))?;
+        
+        let ticket = NodeTicket::new(NodeAddr::new(node_id));
+        
+        Ok(Peer {
+            node_id,
+            ticket,
+            hostname: None,
+            last_seen: None,
+            age_public_key: Some(age_public_key),
+        })
+    }
+
     pub async fn insert_from_ticket(ticket: NodeTicket) -> Result<Option<Peer>> {
         let peer: Peer = ticket.into();
         db().await?
@@ -61,6 +79,13 @@ impl Peer {
             .select("peer")
             .await
             .context("Failed to list peers")
+    }
+
+    pub async fn get(node_id: NodeId) -> Result<Peer> {
+        db().await?
+            .select::<Option<Peer>>(("peer", node_id.to_string()))
+            .await?
+            .ok_or(anyhow!("Could not find peer"))
     }
 
     pub async fn count() -> Result<usize> {

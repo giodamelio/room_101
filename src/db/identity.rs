@@ -1,5 +1,5 @@
 use age::x25519::Identity as AgeIdentity;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use iroh::{NodeId, SecretKey};
 use rand::rngs;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,19 @@ pub struct Identity {
 impl Identity {
     pub fn id(&self) -> NodeId {
         self.secret_key.public()
+    }
+
+    #[cfg(test)]
+    pub fn from_string(secret_key_str: &str, age_key_str: &str) -> Result<Identity> {
+        let secret_key = secret_key_str.parse::<SecretKey>()
+            .context("Failed to parse SecretKey from string")?;
+        let age_key = age_key_str.parse::<AgeIdentity>()
+            .map_err(|e| anyhow!("Failed to parse Age Identity from string: {e}"))?;
+        
+        Ok(Identity {
+            secret_key,
+            age_key,
+        })
     }
 
     pub async fn get() -> Result<Identity> {

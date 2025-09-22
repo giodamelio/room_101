@@ -6,6 +6,7 @@ use tokio::sync::OnceCell;
 pub mod audit_event;
 pub mod identity;
 pub mod peer;
+pub mod secret;
 
 pub use audit_event::AuditEvent;
 pub use identity::Identity;
