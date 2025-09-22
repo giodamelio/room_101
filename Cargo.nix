@@ -3141,6 +3141,47 @@
         };
         resolvedDefaultFeatures = ["default" "std"];
       };
+      "console" = rec {
+        crateName = "console";
+        version = "0.15.11";
+        edition = "2021";
+        sha256 = "1n5gmsjk6isbnw6qss043377kln20lfwlmdk3vswpwpr21dwnk05";
+        authors = [
+          "Armin Ronacher <armin.ronacher@active-4.com>"
+        ];
+        dependencies = [
+          {
+            name = "encode_unicode";
+            packageId = "encode_unicode";
+            target = {
+              target,
+              features,
+            }: (target."windows" or false);
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+          {
+            name = "once_cell";
+            packageId = "once_cell";
+          }
+          {
+            name = "windows-sys";
+            packageId = "windows-sys 0.59.0";
+            target = {
+              target,
+              features,
+            }: (target."windows" or false);
+            features = ["Win32_Foundation" "Win32_System_Console" "Win32_Storage_FileSystem" "Win32_UI_Input_KeyboardAndMouse"];
+          }
+        ];
+        features = {
+          "default" = ["unicode-width" "ansi-parsing"];
+          "unicode-width" = ["dep:unicode-width"];
+          "windows-console-colors" = ["ansi-parsing"];
+        };
+      };
       "const-oid" = rec {
         crateName = "const-oid";
         version = "0.9.6";
@@ -4769,6 +4810,20 @@
           "dogged" = ["dep:dogged"];
           "persistent" = ["dogged"];
         };
+      };
+      "encode_unicode" = rec {
+        crateName = "encode_unicode";
+        version = "1.0.0";
+        edition = "2021";
+        sha256 = "1h5j7j7byi289by63s3w4a8b3g6l5ccdrws7a67nn07vdxj77ail";
+        authors = [
+          "Torbjørn Birch Moltu <t.b.moltu@lyse.net>"
+        ];
+        features = {
+          "ascii" = ["dep:ascii"];
+          "default" = ["std"];
+        };
+        resolvedDefaultFeatures = ["default" "std"];
       };
       "encoding_rs" = rec {
         crateName = "encoding_rs";
@@ -8412,6 +8467,66 @@
           "block-padding" = ["dep:block-padding"];
           "std" = ["block-padding/std"];
         };
+      };
+      "insta" = rec {
+        crateName = "insta";
+        version = "1.43.2";
+        edition = "2021";
+        sha256 = "181m173v4f7s2f3j0lq462s0r6yg60y7fgxmnm1hy06yxd3vdza6";
+        authors = [
+          "Armin Ronacher <armin.ronacher@active-4.com>"
+        ];
+        dependencies = [
+          {
+            name = "console";
+            packageId = "console";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "once_cell";
+            packageId = "once_cell";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            optional = true;
+          }
+          {
+            name = "similar";
+            packageId = "similar";
+            features = ["inline"];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "serde";
+            packageId = "serde";
+            features = ["derive"];
+          }
+        ];
+        features = {
+          "_cargo_insta_internal" = ["clap"];
+          "clap" = ["dep:clap"];
+          "colors" = ["console"];
+          "console" = ["dep:console"];
+          "csv" = ["dep:csv" "serde"];
+          "default" = ["colors"];
+          "filters" = ["regex"];
+          "glob" = ["walkdir" "globset"];
+          "globset" = ["dep:globset"];
+          "json" = ["serde"];
+          "pest" = ["dep:pest"];
+          "pest_derive" = ["dep:pest_derive"];
+          "redactions" = ["pest" "pest_derive" "serde"];
+          "regex" = ["dep:regex"];
+          "ron" = ["dep:ron" "serde"];
+          "serde" = ["dep:serde"];
+          "toml" = ["dep:toml" "serde"];
+          "walkdir" = ["dep:walkdir"];
+          "yaml" = ["serde"];
+        };
+        resolvedDefaultFeatures = ["colors" "console" "default" "serde" "yaml"];
       };
       "instant" = rec {
         crateName = "instant";
@@ -16449,6 +16564,13 @@
             features = ["serde"];
           }
         ];
+        devDependencies = [
+          {
+            name = "insta";
+            packageId = "insta";
+            features = ["yaml"];
+          }
+        ];
       };
       "rstar" = rec {
         crateName = "rstar";
@@ -18008,6 +18130,29 @@
           "default" = ["std"];
         };
         resolvedDefaultFeatures = ["aarch64_neon" "std"];
+      };
+      "similar" = rec {
+        crateName = "similar";
+        version = "2.7.0";
+        edition = "2018";
+        sha256 = "1aidids7ymfr96s70232s6962v5g9l4zwhkvcjp4c5hlb6b5vfxv";
+        authors = [
+          "Armin Ronacher <armin.ronacher@active-4.com>"
+          "Pierre-Étienne Meunier <pe@pijul.org>"
+          "Brandon Williams <bwilliams.eng@gmail.com>"
+        ];
+        features = {
+          "bstr" = ["dep:bstr"];
+          "bytes" = ["bstr" "text"];
+          "default" = ["text"];
+          "inline" = ["text"];
+          "serde" = ["dep:serde"];
+          "unicode" = ["text" "unicode-segmentation" "bstr?/unicode" "bstr?/std"];
+          "unicode-segmentation" = ["dep:unicode-segmentation"];
+          "wasm32_web_time" = ["web-time"];
+          "web-time" = ["dep:web-time"];
+        };
+        resolvedDefaultFeatures = ["default" "inline" "text"];
       };
       "simple-dns" = rec {
         crateName = "simple-dns";
@@ -25783,7 +25928,7 @@
           "Win32_Web" = ["Win32"];
           "Win32_Web_InternetExplorer" = ["Win32_Web"];
         };
-        resolvedDefaultFeatures = ["Wdk" "Wdk_Foundation" "Wdk_Storage" "Wdk_Storage_FileSystem" "Wdk_System" "Wdk_System_IO" "Win32" "Win32_Foundation" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Console" "Win32_System_IO" "Win32_System_Memory" "Win32_System_Pipes" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_WindowsProgramming" "default"];
+        resolvedDefaultFeatures = ["Wdk" "Wdk_Foundation" "Wdk_Storage" "Wdk_Storage_FileSystem" "Wdk_System" "Wdk_System_IO" "Win32" "Win32_Foundation" "Win32_NetworkManagement" "Win32_NetworkManagement_IpHelper" "Win32_NetworkManagement_Ndis" "Win32_Networking" "Win32_Networking_WinSock" "Win32_Security" "Win32_Storage" "Win32_Storage_FileSystem" "Win32_System" "Win32_System_Console" "Win32_System_IO" "Win32_System_Memory" "Win32_System_Pipes" "Win32_System_SystemInformation" "Win32_System_SystemServices" "Win32_System_Threading" "Win32_System_WindowsProgramming" "Win32_UI" "Win32_UI_Input" "Win32_UI_Input_KeyboardAndMouse" "default"];
       };
       "windows-sys 0.60.2" = rec {
         crateName = "windows-sys";

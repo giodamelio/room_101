@@ -151,6 +151,7 @@
             inputs'.bun2nix.packages.default
             iroh-doctor
             iroh-relay
+            cargo-insta
 
             # System dependencies
             pkg-config
