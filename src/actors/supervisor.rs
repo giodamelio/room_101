@@ -54,6 +54,14 @@ impl Actor for SupervisorActor {
         )
         .await?;
 
+        let (_systemd_secrets_actor, _systemd_secrets_handle) = Actor::spawn_linked(
+            Some("systemd_secrets".into()),
+            super::systemd_secrets::SystemdSecretsActor,
+            (),
+            myself.clone().into(),
+        )
+        .await?;
+
         info!("All actors started successfully");
         Ok(())
     }
