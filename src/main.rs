@@ -30,5 +30,6 @@ async fn main() -> Result<()> {
         args::Commands::Peers(peers_args) => commands::peers::run(peers_args).await,
         args::Commands::Status => commands::status::run().await,
         args::Commands::Init(_) => commands::init::run().await,
+        args::Commands::Audit(audit_args) => commands::audit::run(audit_args).await,
     }
 }

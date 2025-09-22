@@ -24,6 +24,8 @@ pub enum Commands {
     Status,
     /// Init Iroh Identity, Age Private Key. Generate Iroh Ticket
     Init(InitArgs),
+    /// Manage audit events
+    Audit(AuditArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -65,6 +67,18 @@ pub enum PeerCommands {
         /// The node ticket to add as a peer
         ticket: NodeTicket,
     },
+}
+
+#[derive(Parser, Debug)]
+pub struct AuditArgs {
+    #[command(subcommand)]
+    pub command: AuditCommands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AuditCommands {
+    /// List all audit events in the database
+    List,
 }
 
 static ARGS: OnceCell<Args> = OnceCell::const_new();

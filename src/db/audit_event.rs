@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use surrealdb::{Datetime, RecordId};
+use surrealdb::RecordId;
 
 use super::db;
 
@@ -12,7 +12,7 @@ pub struct AuditEvent {
     pub event_type: String,
     pub message: String,
     pub data: serde_json::Value,
-    pub timestamp: Datetime,
+    pub timestamp: DateTime<Utc>,
 }
 
 impl AuditEvent {
@@ -22,7 +22,7 @@ impl AuditEvent {
             event_type,
             message,
             data,
-            timestamp: Utc::now().into(),
+            timestamp: Utc::now(),
         };
 
         let created: Option<Self> = db().await?.create("audit_event").content(event).await?;
@@ -32,8 +32,9 @@ impl AuditEvent {
 
     pub async fn list() -> Result<Vec<Self>> {
         db().await?
-            .select("audit_event")
-            .await
+            .query("SELECT * FROM audit_event ORDER BY timestamp ASC")
+            .await?
+            .take(0)
             .context("Failed to list audit events")
     }
 }
