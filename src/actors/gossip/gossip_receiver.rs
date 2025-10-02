@@ -119,7 +119,7 @@ async fn run_reciever(
                         for (_name, subscriber) in subscribers_rx.borrow().clone() {
                             trace!(?subscriber, "Sending verified message to subscriber");
                             if let Err(err) =
-                                subscriber.send_message((sender_public_key, gossip_message))
+                                subscriber.send_message((sender_public_key, gossip_message.clone()))
                             {
                                 warn!(?err, "Failed to send message to subscriber");
                             }

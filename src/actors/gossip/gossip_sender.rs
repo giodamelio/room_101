@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use iroh::NodeId;
 use iroh_gossip::api::GossipSender;
-use ractor::Actor;
+use ractor::{Actor, registry};
 use tracing::{debug, trace};
 
 use crate::actors::gossip::{GossipMessage, signing::SignedMessage};
@@ -62,4 +62,14 @@ impl Actor for GossipSenderActor {
 
         Ok(())
     }
+}
+
+pub async fn send(message: GossipMessage) -> Result<()> {
+    let gossip_sender_ref = registry::where_is("gossip_sender".to_string())
+        .context("Could not get Gossip Sender Actor")?;
+
+    let wrapped_message = GossipSenderMessage::Broadcast(message);
+    gossip_sender_ref.send_message(wrapped_message)?;
+
+    Ok(())
 }

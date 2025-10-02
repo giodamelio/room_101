@@ -4,7 +4,10 @@ use anyhow::Result;
 use ractor::{Actor, ActorRef, time::send_interval};
 use tracing::trace;
 
-use crate::actors::gossip::{GossipMessage, gossip_sender::GossipSenderMessage};
+use crate::actors::gossip::{
+    GossipMessage,
+    gossip_sender::{self, GossipSenderMessage},
+};
 
 pub struct HeartbeatActor;
 
@@ -26,14 +29,12 @@ impl Actor for HeartbeatActor {
         &self,
         _myself: ractor::ActorRef<Self::Msg>,
         _message: Self::Msg,
-        gossip_sender_ref: &mut Self::State,
+        _gossip_sender_ref: &mut Self::State,
     ) -> Result<(), ractor::ActorProcessingErr> {
         // Send the heartbeat message
         let heartbeat = GossipMessage::heartbeat_now();
         trace!(?heartbeat, "Sending heartbeat");
-
-        let heartbeat_msg = GossipSenderMessage::Broadcast(heartbeat);
-        gossip_sender_ref.send_message(heartbeat_msg)?;
+        gossip_sender::send(heartbeat.clone()).await?;
 
         Ok(())
     }

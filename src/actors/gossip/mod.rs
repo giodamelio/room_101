@@ -1,4 +1,6 @@
-use chrono::Utc;
+use ::iroh::NodeId;
+use chrono::{DateTime, Utc};
+use iroh_base::ticket::NodeTicket;
 use serde::{Deserialize, Serialize};
 
 pub mod gossip_receiver;
@@ -7,12 +9,19 @@ pub mod heartbeat;
 pub mod iroh;
 pub mod signing;
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum GossipMessage {
     Ping,
     Pong,
     Heartbeat {
         sent_at: chrono::DateTime<chrono::Utc>,
+    },
+    Introduction {
+        node_id: NodeId,
+        ticket: NodeTicket,
+        time: DateTime<Utc>,
+        hostname: Option<String>,
+        age_public_key: String,
     },
 }
 
