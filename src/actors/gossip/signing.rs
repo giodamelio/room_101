@@ -38,12 +38,6 @@ impl<M: Serialize + DeserializeOwned> SignedMessage<M> {
     }
 }
 
-pub trait MessageSigner: Serialize + DeserializeOwned {
-    fn sign(&self, secret_key: &SecretKey) -> Result<Vec<u8>> {
-        SignedMessage::<Self>::sign_and_encode(secret_key, self)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,8 +50,6 @@ mod tests {
         content: String,
         number: u32,
     }
-
-    impl MessageSigner for TestMessage {}
 
     #[test]
     fn test_sign_and_encode_produces_valid_bytes() {
@@ -149,7 +141,7 @@ mod tests {
             number: 789,
         };
 
-        let encoded = message.sign(&secret_key).unwrap();
+        let encoded = SignedMessage::sign_and_encode(&secret_key, &message).unwrap();
         let (public_key, decoded) =
             SignedMessage::<TestMessage>::verify_and_decode(&encoded).unwrap();
 

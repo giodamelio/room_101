@@ -5,22 +5,12 @@ use tracing::info;
 use crate::db::Peer;
 
 #[derive(Debug, Clone)]
-pub struct SystemdSecretsConfig {
-    pub path: String,
-    pub user_scope: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct AppConfig {
-    pub systemd_config: SystemdSecretsConfig,
-}
+pub struct AppConfig {}
 
 pub struct SupervisorActor;
 
 #[derive(Debug)]
-pub enum SupervisorMessage {
-    Shutdown,
-}
+pub enum SupervisorMessage {}
 
 impl Actor for SupervisorActor {
     type Msg = SupervisorMessage;

@@ -3,7 +3,7 @@ use iroh_base::ticket::NodeTicket;
 use std::path::Path;
 use std::str::FromStr;
 use tokio::fs;
-use tracing::{debug, trace};
+use tracing::trace;
 
 /// Creates a TopicId from a string literal, padding with zeros to 32 bytes at compile time
 /// Fails at compile time if the string is longer than 32 bytes

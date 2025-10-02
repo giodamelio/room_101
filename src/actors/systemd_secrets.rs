@@ -12,6 +12,7 @@ use crate::db::AuditEvent;
 pub struct SystemdSecretsActor;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum SystemdSecretsActorMessage {
     SetSecret(SystemdSecret, Vec<u8>),
     DeleteSecret(SystemdSecret),

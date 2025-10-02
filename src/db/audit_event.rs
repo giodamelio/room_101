@@ -8,6 +8,7 @@ use super::db;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     #[serde(skip_serializing)]
+    #[allow(dead_code)]
     pub id: Option<RecordId>,
     pub event_type: String,
     pub message: String,
@@ -26,7 +27,8 @@ impl AuditEvent {
             timestamp: Utc::now(),
         };
 
-        let _: Option<AuditEvent> = db().await?
+        let _: Option<AuditEvent> = db()
+            .await?
             .create("audit_event")
             .content(event)
             .await

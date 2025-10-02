@@ -92,12 +92,12 @@ impl Peer {
         Ok(result)
     }
 
-    pub async fn get(node_id: NodeId) -> Result<Peer> {
-        db().await?
-            .select::<Option<Peer>>(("peer", node_id.to_string()))
-            .await?
-            .ok_or(anyhow!("Could not find peer"))
-    }
+    // pub async fn get(node_id: NodeId) -> Result<Peer> {
+    //     db().await?
+    //         .select::<Option<Peer>>(("peer", node_id.to_string()))
+    //         .await?
+    //         .ok_or(anyhow!("Could not find peer"))
+    // }
 
     pub async fn count() -> Result<usize> {
         #[derive(serde::Deserialize)]

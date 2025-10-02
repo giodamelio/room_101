@@ -23,5 +23,3 @@ impl GossipMessage {
         }
     }
 }
-
-impl signing::MessageSigner for GossipMessage {}

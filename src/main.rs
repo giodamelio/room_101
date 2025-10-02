@@ -5,9 +5,7 @@ mod args;
 mod commands;
 mod custom_serde;
 mod db;
-mod error;
 mod network;
-mod systemd_secrets;
 mod tracing;
 mod utils;
 
