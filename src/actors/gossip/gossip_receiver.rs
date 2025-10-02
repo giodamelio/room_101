@@ -112,7 +112,9 @@ async fn run_reciever(
                             "Successfully verified and decoded gossip message"
                         );
 
-                        Peer::bump_last_seen(message.delivered_from).await?;
+                        if let Err(err) = Peer::bump_last_seen(message.delivered_from).await {
+                            error!(?err, from = ?message.delivered_from, "Failed to bump last_seen for peer in database");
+                        }
 
                         for (_name, subscriber) in subscribers_rx.borrow().clone() {
                             trace!(?subscriber, "Sending verified message to subscriber");
@@ -135,11 +137,13 @@ async fn run_reciever(
             iroh_gossip::api::Event::NeighborUp(public_key) => {
                 debug!(?public_key, "Neighbor Connected");
 
-                // Add a shitty peer with a basically empty ticket
-                // TODO: can we get the relay/IP data from somewhere else?
-                Peer::insert_from_node_id(public_key).await?;
+                if let Err(err) = Peer::insert_from_node_id(public_key).await {
+                    error!(?err, node_id = ?public_key, "Failed to insert peer for NeighborUp in database");
+                }
 
-                Peer::bump_last_seen(public_key).await?;
+                if let Err(err) = Peer::bump_last_seen(public_key).await {
+                    error!(?err, node_id = ?public_key, "Failed to bump last_seen for NeighborUp in database");
+                }
 
                 AuditEvent::log(
                     "GOSSIP_NEIGHBOR_UP".to_string(),
@@ -153,7 +157,9 @@ async fn run_reciever(
             iroh_gossip::api::Event::NeighborDown(public_key) => {
                 debug!(?public_key, "Neighbor Dropped");
 
-                Peer::bump_last_seen(public_key).await?;
+                if let Err(err) = Peer::bump_last_seen(public_key).await {
+                    error!(?err, node_id = ?public_key, "Failed to bump last_seen for NeighborDown in database");
+                }
 
                 AuditEvent::log(
                     "GOSSIP_NEIGHBOR_DOWN".to_string(),

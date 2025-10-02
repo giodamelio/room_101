@@ -14,7 +14,9 @@ pub struct EncryptedData(pub Vec<u8>);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Secret {
     pub name: String,
+    #[serde(with = "crate::custom_serde::node_id_serde")]
     pub node_id: NodeId,
+    #[serde(with = "crate::custom_serde::chrono_datetime_as_sql")]
     pub created_at: DateTime<Utc>,
     pub data: EncryptedData,
 }

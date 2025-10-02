@@ -78,6 +78,99 @@ pub mod age_recipient_serde {
     }
 }
 
+/// Custom serde serialization/deserialization for chrono::DateTime as SurrealDB datetime
+pub mod chrono_datetime_as_sql {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(x: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        surrealdb::Datetime::from(*x).serialize(s)
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<DateTime<Utc>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let dt = surrealdb::Datetime::deserialize(d)?;
+        Ok(dt.into_inner().into())
+    }
+}
+
+/// Custom serde serialization/deserialization for Option<chrono::DateTime> as SurrealDB datetime
+pub mod optional_chrono_datetime_as_sql {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(x: &Option<DateTime<Utc>>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match x {
+            Some(dt) => surrealdb::Datetime::from(*dt).serialize(s),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<Option<DateTime<Utc>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<surrealdb::Datetime>::deserialize(d)
+            .map(|opt| opt.map(|dt| dt.into_inner().into()))
+    }
+}
+
+/// Custom serde serialization module for Iroh NodeId
+///
+/// Provides safe serialization/deserialization for iroh::NodeId using
+/// the built-in to_string() and from_str() methods.
+pub mod node_id_serde {
+    use iroh::NodeId;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(node_id: &NodeId, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        node_id.to_string().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<NodeId, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<NodeId>().map_err(serde::de::Error::custom)
+    }
+}
+
+/// Custom serde serialization module for Iroh NodeTicket
+///
+/// Provides safe serialization/deserialization for iroh_base::ticket::NodeTicket using
+/// the built-in to_string() and from_str() methods.
+pub mod node_ticket_serde {
+    use iroh_base::ticket::NodeTicket;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(ticket: &NodeTicket, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        ticket.to_string().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<NodeTicket, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<NodeTicket>().map_err(serde::de::Error::custom)
+    }
+}
+
 /// Custom serde serialization module for AgeIdentity
 ///
 /// Provides safe serialization/deserialization for age::x25519::Identity using

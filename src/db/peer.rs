@@ -9,9 +9,16 @@ use super::db;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Peer {
+    #[serde(with = "crate::custom_serde::node_id_serde")]
     pub node_id: NodeId,
+    #[serde(with = "crate::custom_serde::node_ticket_serde")]
     pub ticket: NodeTicket,
     pub hostname: Option<String>,
+    #[serde(
+        with = "crate::custom_serde::optional_chrono_datetime_as_sql",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub last_seen: Option<DateTime<Utc>>,
     #[serde(with = "crate::custom_serde::age_recipient_serde", default)]
     pub age_public_key: Option<AgeRecipient>,
@@ -42,13 +49,15 @@ impl PeerExt<Peer> for Vec<Peer> {
 impl Peer {
     #[cfg(test)]
     pub fn from_string(node_id_str: &str, age_public_key_str: &str) -> Result<Peer> {
-        let node_id = node_id_str.parse::<NodeId>()
+        let node_id = node_id_str
+            .parse::<NodeId>()
             .context("Failed to parse NodeId from string")?;
-        let age_public_key = age_public_key_str.parse::<AgeRecipient>()
+        let age_public_key = age_public_key_str
+            .parse::<AgeRecipient>()
             .map_err(|e| anyhow!("Failed to parse Age Recipient from string: {e}"))?;
-        
+
         let ticket = NodeTicket::new(NodeAddr::new(node_id));
-        
+
         Ok(Peer {
             node_id,
             ticket,
@@ -75,10 +84,12 @@ impl Peer {
     }
 
     pub async fn list() -> Result<Vec<Peer>> {
-        db().await?
+        let database = db().await?;
+        let result = database
             .select("peer")
             .await
-            .context("Failed to list peers")
+            .context("Failed to list peers")?;
+        Ok(result)
     }
 
     pub async fn get(node_id: NodeId) -> Result<Peer> {
@@ -107,6 +118,7 @@ impl Peer {
     pub async fn bump_last_seen(node_id: NodeId) -> Result<()> {
         #[derive(serde::Serialize)]
         struct UpdateLastSeen {
+            #[serde(with = "crate::custom_serde::chrono_datetime_as_sql")]
             last_seen: DateTime<Utc>,
         }
 
@@ -116,7 +128,8 @@ impl Peer {
             .merge(UpdateLastSeen {
                 last_seen: Utc::now(),
             })
-            .await?;
+            .await
+            .unwrap_or(None);
 
         Ok(())
     }
