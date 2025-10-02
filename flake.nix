@@ -215,6 +215,10 @@
           check.enable = true;
           settings = {
             enable = true;
+            default_stages = [
+              "pre-commit"
+              "pre-push"
+            ];
             hooks = {
               # Formatting
               treefmt = {
