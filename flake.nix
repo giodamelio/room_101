@@ -42,7 +42,12 @@
         inputs.git-hooks.flakeModule
       ];
 
-      systems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin"];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+        "x86_64-darwin"
+      ];
 
       perSystem = {
         config,
@@ -82,6 +87,7 @@
 
         iroh-doctor = pkgs.callPackage ./nix/iroh-doctor.nix {};
         iroh-relay = pkgs.callPackage ./nix/iroh-relay.nix {};
+        cargo-test-changed = pkgs.callPackage ./nix/cargo-test-changed.nix {};
 
         # LSP MCP Server
         mcpLspServer = pkgs.callPackage ./nix/mcp-language-server.nix {};
@@ -105,7 +111,12 @@
           settings.servers = {
             lsp = {
               command = pkgs.lib.getExe mcpLspServer;
-              args = ["--workspace" "." "--lsp" "rust-analyzer"];
+              args = [
+                "--workspace"
+                "."
+                "--lsp"
+                "rust-analyzer"
+              ];
             };
             docsrs = {
               command = pkgs.lib.getExe mcpDocsrs;
@@ -151,6 +162,7 @@
             inputs'.bun2nix.packages.default
             iroh-doctor
             iroh-relay
+            cargo-test-changed
             cargo-insta
 
             # System dependencies
@@ -232,6 +244,14 @@
               check-yaml.enable = true;
               end-of-file-fixer.enable = true;
               trim-trailing-whitespace.enable = true;
+
+              # Extra Hook for running tests
+              cargo-test-changed = {
+                enable = true;
+                name = "cargo-test-changed";
+                entry = "cargo test-changed -r nextest";
+                pass_filenames = false;
+              };
             };
           };
         };
