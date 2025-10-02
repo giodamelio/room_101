@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
+use chrono::Utc;
 use futures::TryStreamExt;
 use iroh_gossip::api::GossipReceiver;
 use ractor::{Actor, ActorCell};
@@ -9,8 +10,8 @@ use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    actors::gossip::{GossipMessage, signing::SignedMessage},
-    db::{AuditEvent, Peer},
+    actors::gossip::{GossipMessage, gossip_sender, signing::SignedMessage},
+    db::{AuditEvent, Identity, Peer},
 };
 
 pub struct GossipReceiverActor;
@@ -137,13 +138,28 @@ async fn run_reciever(
             iroh_gossip::api::Event::NeighborUp(public_key) => {
                 debug!(?public_key, "Neighbor Connected");
 
-                if let Err(err) = Peer::insert_from_node_id(public_key).await {
-                    error!(?err, node_id = ?public_key, "Failed to insert peer for NeighborUp in database");
+                // If we don't know this peer send an introduction
+                // This double query is a mild race condition, but I don't care
+                if !Peer::is_known(public_key).await?
+                    && let Some(_peer) = Peer::insert_from_node_id(public_key).await?
+                {
+                    trace!(?public_key, "Sending Introduction");
+
+                    let identity = Identity::get().await?;
+                    let ticket = super::node_ticket().context("Node ticket not yet initialized")?;
+
+                    let introduction = GossipMessage::Introduction {
+                        node_id: identity.id(),
+                        ticket,
+                        time: Utc::now(),
+                        hostname: None,
+                        age_public_key: identity.age_key.to_public().to_string(),
+                    };
+
+                    gossip_sender::send(introduction).await?;
                 }
 
-                if let Err(err) = Peer::bump_last_seen(public_key).await {
-                    error!(?err, node_id = ?public_key, "Failed to bump last_seen for NeighborUp in database");
-                }
+                Peer::bump_last_seen(public_key).await?;
 
                 AuditEvent::log(
                     "GOSSIP_NEIGHBOR_UP".to_string(),

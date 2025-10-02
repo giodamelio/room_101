@@ -56,6 +56,10 @@ impl Actor for IrohActor {
         let relay = endpoint.home_relay().initialized().await;
         let addr = endpoint.node_addr().initialized().await;
         let ticket = NodeTicket::new(addr.clone());
+
+        // Set the global ticket
+        super::NODE_TICKET.set(ticket.clone())?;
+
         info!( ticket = ?ticket.to_string(), "Ticket");
         debug!(
             node_id = ?ticket.node_addr().node_id,

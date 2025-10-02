@@ -96,7 +96,7 @@ impl Peer {
     //     db().await?
     //         .select::<Option<Peer>>(("peer", node_id.to_string()))
     //         .await?
-    //         .ok_or(anyhow!("Could not find peer"))
+    //         .context("Could not find peer")
     // }
 
     pub async fn count() -> Result<usize> {
@@ -132,6 +132,16 @@ impl Peer {
             .unwrap_or(None);
 
         Ok(())
+    }
+
+    pub async fn is_known(node_id: NodeId) -> Result<bool> {
+        let peer: Option<Peer> = db()
+            .await?
+            .select(("peer", node_id.to_string()))
+            .await
+            .context("Failed to check if peer exists")?;
+
+        Ok(peer.is_some())
     }
 
     pub fn node_addr(&self) -> &NodeAddr {
