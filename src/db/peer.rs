@@ -144,6 +144,39 @@ impl Peer {
         Ok(peer.is_some())
     }
 
+    pub async fn update_from_introduction(
+        node_id: NodeId,
+        ticket: NodeTicket,
+        hostname: Option<String>,
+        age_public_key_str: String,
+    ) -> Result<Option<Peer>> {
+        let age_public_key = age_public_key_str
+            .parse::<AgeRecipient>()
+            .map_err(|e| anyhow!("Failed to parse Age Recipient from string: {e}"))?;
+
+        #[derive(serde::Serialize)]
+        struct UpdateIntroduction {
+            #[serde(with = "crate::custom_serde::node_ticket_serde")]
+            ticket: NodeTicket,
+            hostname: Option<String>,
+            #[serde(with = "crate::custom_serde::age_recipient_serde")]
+            age_public_key: Option<AgeRecipient>,
+        }
+
+        let peer: Option<Peer> = db()
+            .await?
+            .update(("peer", node_id.to_string()))
+            .merge(UpdateIntroduction {
+                ticket,
+                hostname,
+                age_public_key: Some(age_public_key),
+            })
+            .await
+            .context("Failed to update peer from introduction")?;
+
+        Ok(peer)
+    }
+
     pub fn node_addr(&self) -> &NodeAddr {
         self.ticket.node_addr()
     }

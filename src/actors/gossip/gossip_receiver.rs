@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Context, Result, anyhow};
-use chrono::Utc;
+use anyhow::{Result, anyhow};
 use futures::TryStreamExt;
 use iroh_gossip::api::GossipReceiver;
 use ractor::{Actor, ActorCell};
@@ -10,8 +9,8 @@ use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    actors::gossip::{GossipMessage, gossip_sender, signing::SignedMessage},
-    db::{AuditEvent, Identity, Peer},
+    actors::gossip::{GossipEvent, GossipMessage, signing::SignedMessage},
+    db::{AuditEvent, Peer},
 };
 
 pub struct GossipReceiverActor;
@@ -119,9 +118,10 @@ async fn run_reciever(
 
                         for (_name, subscriber) in subscribers_rx.borrow().clone() {
                             trace!(?subscriber, "Sending verified message to subscriber");
-                            if let Err(err) =
-                                subscriber.send_message((sender_public_key, gossip_message.clone()))
-                            {
+                            if let Err(err) = subscriber.send_message(GossipEvent::Message(
+                                sender_public_key,
+                                gossip_message.clone(),
+                            )) {
                                 warn!(?err, "Failed to send message to subscriber");
                             }
                         }
@@ -138,28 +138,14 @@ async fn run_reciever(
             iroh_gossip::api::Event::NeighborUp(public_key) => {
                 debug!(?public_key, "Neighbor Connected");
 
-                // If we don't know this peer send an introduction
-                // This double query is a mild race condition, but I don't care
-                if !Peer::is_known(public_key).await?
-                    && let Some(_peer) = Peer::insert_from_node_id(public_key).await?
-                {
-                    trace!(?public_key, "Sending Introduction");
-
-                    let identity = Identity::get().await?;
-                    let ticket = super::node_ticket().context("Node ticket not yet initialized")?;
-
-                    let introduction = GossipMessage::Introduction {
-                        node_id: identity.id(),
-                        ticket,
-                        time: Utc::now(),
-                        hostname: None,
-                        age_public_key: identity.age_key.to_public().to_string(),
-                    };
-
-                    gossip_sender::send(introduction).await?;
-                }
-
                 Peer::bump_last_seen(public_key).await?;
+
+                for (_name, subscriber) in subscribers_rx.borrow().clone() {
+                    trace!(?subscriber, "Sending NeighborUp to subscriber");
+                    if let Err(err) = subscriber.send_message(GossipEvent::NeighborUp(public_key)) {
+                        warn!(?err, "Failed to send NeighborUp to subscriber");
+                    }
+                }
 
                 AuditEvent::log(
                     "GOSSIP_NEIGHBOR_UP".to_string(),
@@ -175,6 +161,14 @@ async fn run_reciever(
 
                 if let Err(err) = Peer::bump_last_seen(public_key).await {
                     error!(?err, node_id = ?public_key, "Failed to bump last_seen for NeighborDown in database");
+                }
+
+                for (_name, subscriber) in subscribers_rx.borrow().clone() {
+                    trace!(?subscriber, "Sending NeighborDown to subscriber");
+                    if let Err(err) = subscriber.send_message(GossipEvent::NeighborDown(public_key))
+                    {
+                        warn!(?err, "Failed to send NeighborDown to subscriber");
+                    }
                 }
 
                 AuditEvent::log(

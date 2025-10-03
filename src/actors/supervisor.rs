@@ -35,10 +35,10 @@ impl Actor for SupervisorActor {
         )
         .await?;
 
-        // Start a actor that we are using to test the gossip subscriber
-        let (_test_listener_actor, _test_listener_handle) = Actor::spawn_linked(
-            Some("test_listener".into()),
-            super::test_listener::TestListenerActor,
+        // Start the introducer actor
+        let (_introducer_actor, _introducer_handle) = Actor::spawn_linked(
+            Some("introducer".into()),
+            super::introducer::IntroducerActor,
             (),
             myself.clone().into(),
         )

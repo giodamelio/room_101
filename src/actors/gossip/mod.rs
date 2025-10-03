@@ -10,6 +10,13 @@ pub mod heartbeat;
 pub mod iroh;
 pub mod signing;
 
+#[derive(Debug, Clone)]
+pub enum GossipEvent {
+    Message(NodeId, GossipMessage),
+    NeighborUp(NodeId),
+    NeighborDown(NodeId),
+}
+
 static NODE_TICKET: OnceCell<NodeTicket> = OnceCell::const_new();
 
 /// Get the full ticket of the current node
